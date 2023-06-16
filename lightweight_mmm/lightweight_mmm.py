@@ -64,7 +64,9 @@ Prior = Union[
 _NAMES_TO_MODEL_TRANSFORMS = immutabledict.immutabledict({
     "hill_adstock": models.transform_hill_adstock,
     "adstock": models.transform_adstock,
-    "carryover": models.transform_carryover
+    "carryover": models.transform_carryover,
+    "exponential_carryover": models.transform_exponential_carryover,
+    "exponential_adstock": models.transform_exponential_adstock,
 })
 _MODEL_FUNCTION = models.media_mix_model
 
@@ -141,6 +143,7 @@ class LightweightMMM:
       dictionary if none were passed.
   """
   model_name: str = "hill_adstock"
+  transform_hyperprior: bool = True
   n_media_channels: int = dataclasses.field(init=False, repr=False)
   n_geos: int = dataclasses.field(init=False, repr=False)
   media: jax.Array = dataclasses.field(
@@ -258,6 +261,7 @@ class LightweightMMM:
       media_prior: jnp.ndarray,
       target: jnp.ndarray,
       extra_features: Optional[jnp.ndarray] = None,
+      doms = None,
       degrees_seasonality: int = 2,
       seasonality_frequency: int = 52,
       weekday_seasonality: bool = False,
@@ -269,7 +273,9 @@ class LightweightMMM:
       init_strategy: Callable[[Mapping[Any, Any], Any],
                               jnp.ndarray] = numpyro.infer.init_to_median,
       custom_priors: Optional[Dict[str, Prior]] = None,
-      seed: Optional[int] = None) -> None:
+      seed: Optional[int] = None,
+      transform_kwargs: Mapping[str, Any] = None
+      ) -> None:
     """Fits MMM given the media data, extra features, costs and sales/KPI.
 
     For detailed information on the selected model please refer to its
@@ -303,6 +309,7 @@ class LightweightMMM:
         details.
       seed: Seed to use for PRNGKey during training. For better replicability
         run all different trainings with the same seed.
+      transform_kwargs: Contrain parameters of transforms to fixed values
     """
     if media.ndim not in (2, 3):
       raise ValueError(
@@ -341,6 +348,15 @@ class LightweightMMM:
       logging.warn("You have chosen daily seasonality and frequency 52 "
                    "(weekly), please check you made the right seasonality "
                    "choices.")
+      
+    # transform_prior_function = (
+    #   models._get_transform_default_priors
+    #   if not self.transform_hyperprior
+    #   else models._get_transform_default_hyperprior_priors
+    # )
+    
+    if doms is not None:
+      doms = jnp.array(doms)
 
     if extra_features is not None:
       extra_features = jnp.array(extra_features)
@@ -365,11 +381,16 @@ class LightweightMMM:
         extra_features=extra_features,
         target_data=jnp.array(target),
         media_prior=jnp.array(media_prior),
+        doms=doms,
         degrees_seasonality=degrees_seasonality,
         frequency=seasonality_frequency,
         transform_function=self._model_transform_function,
+        #transform_prior_function=transform_prior_function,
+        transform_hyperprior=self.transform_hyperprior,
         weekday_seasonality=weekday_seasonality,
-        custom_priors=custom_priors)
+        custom_priors=custom_priors,
+        transform_kwargs=transform_kwargs
+      )
 
     self.custom_priors = custom_priors
     if media_names is not None:
@@ -379,6 +400,7 @@ class LightweightMMM:
     self.n_media_channels = media.shape[1]
     self.n_geos = media.shape[2] if media.ndim == 3 else 1
     self._media_prior = media_prior
+    #self._transform_prior_function = transform_prior_function
     self.trace = mcmc.get_samples()
     self._number_warmup = number_warmup
     self._number_samples = number_samples
@@ -389,6 +411,7 @@ class LightweightMMM:
     self._seasonality_frequency = seasonality_frequency
     self._weekday_seasonality = weekday_seasonality
     self.media = media
+    self.doms = doms
     self._extra_features = extra_features# jax-devicearray
     self._mcmc = mcmc
     logging.info("Model has been fitted")
@@ -408,10 +431,13 @@ class LightweightMMM:
       self,
       rng_key: jnp.ndarray,
       media_data: jnp.ndarray,
+      doms: Optional[jnp.ndarray],
       extra_features: Optional[jnp.ndarray],
       media_prior: jnp.ndarray,
       degrees_seasonality: int, frequency: int,
       transform_function: Callable[[Any], jnp.ndarray],
+      transform_hyperprior: bool,
+      #transform_prior_function,
       weekday_seasonality: bool,
       model: Callable[[Any], None],
       posterior_samples: Dict[str, jnp.ndarray],
@@ -446,9 +472,12 @@ class LightweightMMM:
             extra_features=extra_features,
             media_prior=media_prior,
             target_data=None,
+            doms=doms,
             degrees_seasonality=degrees_seasonality,
             frequency=frequency,
             transform_function=transform_function,
+            transform_hyperprior=transform_hyperprior,
+            #transform_prior_function=transform_prior_function,
             custom_priors=custom_priors,
             weekday_seasonality=weekday_seasonality)
 
@@ -456,6 +485,7 @@ class LightweightMMM:
       self,
       media: jnp.ndarray,
       extra_features: Optional[jnp.ndarray] = None,
+      doms: Optional[jnp.ndarray] = None,
       media_gap: Optional[jnp.ndarray] = None,
       target_scaler: Optional[preprocessing.CustomScaler] = None,
       seed: Optional[int] = None
@@ -504,11 +534,23 @@ class LightweightMMM:
                 jnp.zeros((media_gap.shape[0], *self._extra_features.shape[1:]))
             ],
             axis=0)
+      if doms is not None:
+        previous_doms = jnp.concatenate(
+          arrays=[
+            self.doms,
+            jnp.zeros((media_gap.shape[0],))
+          ], axis=0
+        )
     else:
       previous_media = self.media
+      previous_doms = self.doms
       previous_extra_features = self._extra_features
 
     full_media = jnp.concatenate(arrays=[previous_media, media], axis=0)
+    if doms is not None:
+      full_doms = jnp.concatenate(arrays=[previous_doms, doms], axis=0)
+    else:
+      full_doms = None
     if extra_features is not None:
       full_extra_features = jnp.concatenate(
           arrays=[previous_extra_features, extra_features], axis=0)
@@ -517,14 +559,17 @@ class LightweightMMM:
     if seed is None:
       seed = utils.get_time_seed()
     prediction = self._predict(
-        rng_key=jax.random.PRNGKey(seed=seed),
+        rng_key=jax.random.PRNGKey(seed=seed),  
         media_data=full_media,
         extra_features=full_extra_features,
         media_prior=jnp.array(self._media_prior),
+        doms=full_doms,
         degrees_seasonality=self._degrees_seasonality,
         frequency=self._seasonality_frequency,
         weekday_seasonality=self._weekday_seasonality,
         transform_function=self._model_transform_function,
+        transform_hyperprior=self.transform_hyperprior,
+        #transform_prior_function=self._transform_prior_function,
         model=self._model_function,
         custom_priors=self.custom_priors,
         posterior_samples=self.trace)["mu"][:, previous_media.shape[0]:]

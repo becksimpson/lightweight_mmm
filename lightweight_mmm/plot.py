@@ -447,7 +447,8 @@ def plot_response_curves(# jax-ndarray
 
   prediction_offset = media_mix_model.predict(
       media=jnp.zeros((1, *media.shape[1:])),
-      extra_features=extra_features).mean(axis=0)
+      extra_features=extra_features
+  ).mean(axis=0)
 
   if media.ndim == 3:
     diagonal = jnp.expand_dims(diagonal, axis=-1)
@@ -1166,6 +1167,7 @@ def _make_prior_and_posterior_subplot_for_one_feature(
       lw=4,
       clip=clipping_bounds,
       color="tab:blue", ax=ax, label="prior")
+  ax.axvline(np.median(prior_samples), linestyle='--', color='tab:blue', label='prior median')
   prior_xlims = ax.get_xlim()
 
   sns.kdeplot(
@@ -1175,6 +1177,7 @@ def _make_prior_and_posterior_subplot_for_one_feature(
       cut=0,
       bw_adjust=kde_bandwidth_adjust_for_posterior,
       color="tab:orange", ax=ax, label="posterior")
+  ax.axvline(np.median(posterior_samples.flatten()), linestyle='--', color='tab:orange', label='posterior median')
   posterior_xlims = ax.get_xlim()
 
   ax.legend(loc="best")
@@ -1236,6 +1239,9 @@ def _collect_features_for_prior_posterior_plot(
 
   if media_mix_model._extra_features is None:
     features = features.difference(["coef_extra_features"])
+  
+  if media_mix_model.doms is None:
+    features = features.difference([models._MULTIPLIER_DAY_OF_MONTH, models._PARAM_DAY_OF_MONTH])
 
   if media_mix_model.media.ndim == 2:
     features = features.difference(models.GEO_ONLY_PRIORS)
@@ -1311,7 +1317,7 @@ def plot_prior_and_posterior(
     NotFittedModelError: media_mix_model has not yet been fit.
     ValueError: A feature has been created without a well-defined prior.
   """
-
+  media_names = media_mix_model.media_names
   (features, geo_level_features, channel_level_features, seasonal_features,
    other_features) = _collect_features_for_prior_posterior_plot(
        media_mix_model, selected_features)
@@ -1391,8 +1397,14 @@ def plot_prior_and_posterior(
 
     if feature in channel_level_features:
       for i_channel in range(media_mix_model.n_media_channels):
-        subplot_title = f"{feature}, channel {i_channel}"
+        subplot_title = f"{feature}, {media_names[i_channel]}"
         if feature in ("channel_coef_media", "coef_media"):
+          # NOTE: I changed this
+          # prior_distribution = numpyro.distributions.TruncatedNormal(
+          #     loc=jnp.squeeze(media_mix_model._media_prior[i_channel]),
+          #     scale=0.05,
+          #     low=1e-6
+          # )
           prior_distribution = numpyro.distributions.continuous.HalfNormal(
               scale=jnp.squeeze(media_mix_model._media_prior[i_channel]))
         posterior_samples = np.array(
@@ -1406,6 +1418,11 @@ def plot_prior_and_posterior(
              i_ax=i_ax,
              hyperprior=hyperprior,
              **kwargs_for_helper_function)
+        if feature == 'coef_media':
+          fig.axes[i_ax - 1].set_xlim(0, 0.4)
+        # if feature == 'ad_effect_retention_rate':
+        #   fig.axes[i_ax - 1].set_xlim(0, 1.0)
+
 
     if feature in seasonal_features:
       for i_season in range(media_mix_model._degrees_seasonality):
