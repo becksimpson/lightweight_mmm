@@ -186,8 +186,10 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Prior]:
 
 
 
-def _get_transform_default_priors(transform_hyperprior) -> Mapping[str, Prior]:
+def _get_transform_default_priors(transform_hyperprior, *prior_indexes) -> Mapping[str, Prior]:
 
+  # Prior distributions considered
+  transform_prior_lists = _get_transform_default_priors_lists()
 
   # Generate hyperprior distribution samples for all possible hyper-priors.
   hyperprior_distributions = _get_transform_hyperprior_distributions()
@@ -219,45 +221,63 @@ def _get_transform_default_priors(transform_hyperprior) -> Mapping[str, Prior]:
         lambda _: prior_default,
         None
       )
+  
+  # return immutabledict.immutabledict({
+  #     "carryover": immutabledict.immutabledict
+  #       ({
+  #         get_prior(param,
+  #           transform_prior_lists[param][
+  #             prior_indexes.get('carryover', {}).get(param, 0)
+  #           ]
+  #         )
+  #         for param in [_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY, _EXPONENT]
+  #       })
+  # })
 
   return immutabledict.immutabledict({
       "carryover": immutabledict.immutabledict
           ({
-            _AD_EFFECT_RETENTION_RATE: get_prior(_AD_EFFECT_RETENTION_RATE,
-              dist.Beta(concentration1=1., concentration0=1.)),
+            _AD_EFFECT_RETENTION_RATE: get_prior(
+              _AD_EFFECT_RETENTION_RATE,
+              dist.Beta(concentration1=1., concentration0=1.)
+              #transform_priors_lists[_AD_EFFECT_RETENTION_RATE]
+            ),
             _PEAK_EFFECT_DELAY: get_prior(_PEAK_EFFECT_DELAY,
-              dict(scale=2.)),
+              dist.HalfNormal(scale=2.)
+              #transform_priors_lists[_PEAK_EFFECT_DELAY][]
+            ),
             _EXPONENT: get_prior(_EXPONENT,
-              dict(concentration1=9., concentration0=1.))
+              #transform_priors_lsits[_EXPONENT]
+              dist.Beta(concentration1=9., concentration0=1.)
+            )
           }),
       "adstock":immutabledict.immutabledict
         ({
           _EXPONENT: get_prior(_EXPONENT,
-            dict(concentration1=9., concentration0=1.)),
+            dist.Beta(concentration1=9., concentration0=1.)),
           _LAG_WEIGHT: get_prior(_LAG_WEIGHT,
-            dict(concentration1=2., concentration0=1.))
+            dist.Beta(concentration1=2., concentration0=1.))
         }),
       "hill_adstock":
           immutabledict.immutabledict({
               _LAG_WEIGHT: get_prior(_LAG_WEIGHT,
-                {'concentration1': 2., 'concentration0': 1.}
+                dist.Beta(concentration1= 2., concentration0= 1.)
               ),
               _HALF_MAX_EFFECTIVE_CONCENTRATION:get_prior(_HALF_MAX_EFFECTIVE_CONCENTRATION,
-                {'concentration': 1., 'rate': 1.}
+                dist.Gamma(concentration= 1., rate= 1.)
               ),
-              _SLOPE: get_prior(_SLOPE, {'concentration': 1., 'rate': 1.})
+              _SLOPE: get_prior(_SLOPE, dist.Gamma(concentration= 1., rate= 1.))
           }),
       "exponential_carryover": 
           immutabledict.immutabledict({
             _SATURATION: get_prior(_SATURATION,
-              #{'concentration': 1., 'rate': 1.}
-              {'scale': 2.}
+              dist.HalfNormal(scale=2.)
             ),
             _AD_EFFECT_RETENTION_RATE: get_prior(_AD_EFFECT_RETENTION_RATE,
-              {'concentration1': 1., 'concentration0': 1.}
+              dist.Beta(concentration1=1., concentration0= 1.)
             ),
             _PEAK_EFFECT_DELAY: get_prior(_PEAK_EFFECT_DELAY,
-              {'scale': 2.}
+              dist.HalfNormal(scale= 2.)
             )
       }),
       "exponential_adstock":
@@ -265,12 +285,12 @@ def _get_transform_default_priors(transform_hyperprior) -> Mapping[str, Prior]:
           # Strongest assumption no saturatio, linear, near 0
           _SATURATION: get_prior(_SATURATION, 
             #{'concentration': 1., 'rate': 1.}
-            {'scale': 2.}
+            dist.HalfNormal(scale= 2.)
           ),
           # Strongest assumption no lag effect, near 1.
           # concentration1 is alpha
           _LAG_WEIGHT: get_prior(_LAG_WEIGHT, 
-              {'concentration1': 1., 'concentration0': 3.}
+              dist.Beta(concentration1= 1., concentration0= 3.)
           )
         })
   })
