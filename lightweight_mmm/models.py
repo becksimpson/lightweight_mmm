@@ -39,7 +39,9 @@ import numpyro
 from numpyro import distributions as dist
 from numpyro.contrib.control_flow import cond
 
-from lightweight_mmm import media_transforms, _NAMES_TO_MODEL_TRANSFORMS
+from lightweight_mmm import media_transforms
+# from lightweight_mmm.lightweight_mmm import _NAMES_TO_MODEL_TRANSFORMS
+
 
 
 Prior = Union[
@@ -186,7 +188,7 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Prior]:
 
 
 
-def _get_transform_default_priors(transform_hyperprior, *prior_indexes) -> Mapping[str, Prior]:
+def _get_transform_default_priors(transform_hyperprior) -> Mapping[str, Prior]:
 
   # Prior distributions considered
   transform_prior_lists = _get_transform_default_priors_lists()
@@ -336,39 +338,39 @@ def _get_transform_default_priors_lists():
   })
 
 
-def ensemble_transform(
-  media_data: jnp.ndarray,
-  custom_priors: MutableMapping[str, Prior],
-  **transform_kwargs
-):
-  #TODO: pass in list of potential model functions
-  model_names = list(TRANSFORM_PRIORS_NAMES.keys())
-  #   'hill_adstock',
-  #   'exponential_saturation',
-  #   'exponential_carryover',
-  # ]
+# def ensemble_transform(
+#   media_data: jnp.ndarray,
+#   custom_priors: MutableMapping[str, Prior],
+#   **transform_kwargs
+# ):
+#   #TODO: pass in list of potential model functions
+#   model_names = list(TRANSFORM_PRIORS_NAMES.keys())
+#   #   'hill_adstock',
+#   #   'exponential_saturation',
+#   #   'exponential_carryover',
+#   # ]
 
-  model_selection = numpyro.sample(
-    name='model_selection',
-    fn=dist.DiscreteUniform(low=0, high=len(model_names))
-  )
-  model_name = model_names[model_selection]
-  model_transform = _NAMES_TO_MODEL_TRANSFORMS[model_name]
+#   model_selection = numpyro.sample(
+#     name='model_selection',
+#     fn=dist.DiscreteUniform(low=0, high=len(model_names))
+#   )
+#   model_name = model_names[model_selection]
+#   model_transform = _NAMES_TO_MODEL_TRANSFORMS[model_name]
 
-  # Transform hyperprior - bias towards using lists of priors
-  transform_hyperprior = numpyro.sample(
-    name='transform_hyperprior',
-    fn=dist.Binomial(total_count=1, probs=0.2)
-  )
+#   # Transform hyperprior - bias towards using lists of priors
+#   transform_hyperprior = numpyro.sample(
+#     name='transform_hyperprior',
+#     fn=dist.Binomial(total_count=1, probs=0.2)
+#   )
 
-  # Create custom priors
+#   # Create custom priors
 
 
 
-  # Use if not hyperprior
+#   # Use if not hyperprior
   
 
-  # Call transform function & return
+#   # Call transform function & return
   
 
   
@@ -836,222 +838,222 @@ def media_mix_model(
   numpyro.sample(
       name="target", fn=dist.Normal(loc=mu, scale=sigma), obs=target_data)
 
-def ensemble_media_mix_model(
-    media_data: jnp.ndarray,
-    target_data: jnp.ndarray,
-    media_prior: jnp.ndarray,
-    doms:jnp.ndarray,
-    #degrees_seasonality: int,
-    frequency: int,
-    # transform_function: TransformFunction,
-    # transform_hyperprior: bool,
-    custom_priors: MutableMapping[str, Prior],
-    transform_kwargs: Optional[MutableMapping[str, Any]] = None,
-    # doms: Optional[jnp.ndarray] = None,
-    # weekday_seasonality: bool = False,
-    extra_features: Optional[jnp.array] = None
-    ) -> None:
-  """Media mix model.
+# def ensemble_media_mix_model(
+#     media_data: jnp.ndarray,
+#     target_data: jnp.ndarray,
+#     media_prior: jnp.ndarray,
+#     doms:jnp.ndarray,
+#     #degrees_seasonality: int,
+#     frequency: int,
+#     # transform_function: TransformFunction,
+#     # transform_hyperprior: bool,
+#     custom_priors: MutableMapping[str, Prior],
+#     transform_kwargs: Optional[MutableMapping[str, Any]] = None,
+#     # doms: Optional[jnp.ndarray] = None,
+#     # weekday_seasonality: bool = False,
+#     extra_features: Optional[jnp.array] = None
+#     ) -> None:
+#   """Media mix model.
 
-  Args:
-    media_data: Media data to be be used in the model.
-    target_data: Target data for the model.
-    media_prior: Cost prior for each of the media channels.
-    degrees_seasonality: Number of degrees of seasonality to use.
-    frequency: Frequency of the time span which was used to aggregate the data.
-      Eg. if weekly data then frequency is 52.
-    transform_function: Function to use to transform the media data in the
-      model. Currently the following are supported: 'transform_adstock',
-        'transform_carryover' and 'transform_hill_adstock'.
-    custom_priors: The custom priors we want the model to take instead of the
-      default ones. See our custom_priors documentation for details about the
-      API and possible options.
-    transform_kwargs: Any extra keyword arguments to pass to the transform
-      function. For example the adstock function can take a boolean to noramlise
-      output or not.
-    weekday_seasonality: In case of daily data you can estimate a weekday (6)
-      parameter.
-    extra_features: Extra features data to include in the model.
-  """
-  default_priors = _get_default_priors()
+#   Args:
+#     media_data: Media data to be be used in the model.
+#     target_data: Target data for the model.
+#     media_prior: Cost prior for each of the media channels.
+#     degrees_seasonality: Number of degrees of seasonality to use.
+#     frequency: Frequency of the time span which was used to aggregate the data.
+#       Eg. if weekly data then frequency is 52.
+#     transform_function: Function to use to transform the media data in the
+#       model. Currently the following are supported: 'transform_adstock',
+#         'transform_carryover' and 'transform_hill_adstock'.
+#     custom_priors: The custom priors we want the model to take instead of the
+#       default ones. See our custom_priors documentation for details about the
+#       API and possible options.
+#     transform_kwargs: Any extra keyword arguments to pass to the transform
+#       function. For example the adstock function can take a boolean to noramlise
+#       output or not.
+#     weekday_seasonality: In case of daily data you can estimate a weekday (6)
+#       parameter.
+#     extra_features: Extra features data to include in the model.
+#   """
+#   default_priors = _get_default_priors()
 
-  data_size = media_data.shape[0]
-  n_channels = media_data.shape[1]
-  geo_shape = (media_data.shape[2],) if media_data.ndim == 3 else ()
-  n_geos = media_data.shape[2] if media_data.ndim == 3 else 1
+#   data_size = media_data.shape[0]
+#   n_channels = media_data.shape[1]
+#   geo_shape = (media_data.shape[2],) if media_data.ndim == 3 else ()
+#   n_geos = media_data.shape[2] if media_data.ndim == 3 else 1
 
-  with numpyro.plate(name=f"{_INTERCEPT}_plate", size=n_geos):
-    intercept = numpyro.sample(
-        name=_INTERCEPT,
-        fn=custom_priors.get(_INTERCEPT, default_priors[_INTERCEPT]))
+#   with numpyro.plate(name=f"{_INTERCEPT}_plate", size=n_geos):
+#     intercept = numpyro.sample(
+#         name=_INTERCEPT,
+#         fn=custom_priors.get(_INTERCEPT, default_priors[_INTERCEPT]))
 
-  with numpyro.plate(name=f"{_SIGMA}_plate", size=n_geos):
-    sigma = numpyro.sample(
-        name=_SIGMA,
-        fn=custom_priors.get(_SIGMA, default_priors[_SIGMA]))
+#   with numpyro.plate(name=f"{_SIGMA}_plate", size=n_geos):
+#     sigma = numpyro.sample(
+#         name=_SIGMA,
+#         fn=custom_priors.get(_SIGMA, default_priors[_SIGMA]))
 
-  # TODO(): Force all geos to have the same trend sign.
-  with numpyro.plate(name=f"{_COEF_TREND}_plate", size=n_geos):
-    coef_trend = numpyro.sample(
-        name=_COEF_TREND,
-        fn=custom_priors.get(_COEF_TREND, default_priors[_COEF_TREND]))
+#   # TODO(): Force all geos to have the same trend sign.
+#   with numpyro.plate(name=f"{_COEF_TREND}_plate", size=n_geos):
+#     coef_trend = numpyro.sample(
+#         name=_COEF_TREND,
+#         fn=custom_priors.get(_COEF_TREND, default_priors[_COEF_TREND]))
 
-  expo_trend = numpyro.sample(
-      name=_EXPO_TREND,
-      fn=custom_priors.get(
-          _EXPO_TREND, default_priors[_EXPO_TREND]))
+#   expo_trend = numpyro.sample(
+#       name=_EXPO_TREND,
+#       fn=custom_priors.get(
+#           _EXPO_TREND, default_priors[_EXPO_TREND]))
 
-  with numpyro.plate(
-      name="channel_media_plate",
-      size=n_channels,
-      dim=-2 if media_data.ndim == 3 else -1):
-    coef_media = numpyro.sample(
-        name="channel_coef_media" if media_data.ndim == 3 else "coef_media",
-        #fn=dist.TruncatedNormal(loc=media_prior, scale=0.05, low=1e-6)
-        fn=dist.HalfNormal(scale=media_prior)
-      )#)
-    if media_data.ndim == 3:
-      with numpyro.plate(
-          name="geo_media_plate",
-          size=n_geos,
-          dim=-1):
-        # Corrects the mean to be the same as in the channel only case.
-        normalisation_factor = jnp.sqrt(2.0 / jnp.pi)
-        coef_media = numpyro.sample(
-            name="coef_media",
-            fn=dist.HalfNormal(scale=coef_media * normalisation_factor)
-        )
+#   with numpyro.plate(
+#       name="channel_media_plate",
+#       size=n_channels,
+#       dim=-2 if media_data.ndim == 3 else -1):
+#     coef_media = numpyro.sample(
+#         name="channel_coef_media" if media_data.ndim == 3 else "coef_media",
+#         #fn=dist.TruncatedNormal(loc=media_prior, scale=0.05, low=1e-6)
+#         fn=dist.HalfNormal(scale=media_prior)
+#       )#)
+#     if media_data.ndim == 3:
+#       with numpyro.plate(
+#           name="geo_media_plate",
+#           size=n_geos,
+#           dim=-1):
+#         # Corrects the mean to be the same as in the channel only case.
+#         normalisation_factor = jnp.sqrt(2.0 / jnp.pi)
+#         coef_media = numpyro.sample(
+#             name="coef_media",
+#             fn=dist.HalfNormal(scale=coef_media * normalisation_factor)
+#         )
 
-  with numpyro.plate(name=f"{_GAMMA_SEASONALITY}_sin_cos_plate", size=2):
-    with numpyro.plate(name=f"{_GAMMA_SEASONALITY}_plate",
-                       size=degrees_seasonality):
-      gamma_seasonality = numpyro.sample(
-          name=_GAMMA_SEASONALITY,
-          fn=custom_priors.get(
-              _GAMMA_SEASONALITY, default_priors[_GAMMA_SEASONALITY]))
+#   with numpyro.plate(name=f"{_GAMMA_SEASONALITY}_sin_cos_plate", size=2):
+#     with numpyro.plate(name=f"{_GAMMA_SEASONALITY}_plate",
+#                        size=degrees_seasonality):
+#       gamma_seasonality = numpyro.sample(
+#           name=_GAMMA_SEASONALITY,
+#           fn=custom_priors.get(
+#               _GAMMA_SEASONALITY, default_priors[_GAMMA_SEASONALITY]))
 
-  # Optional weekday seasonality
-  weekday_seasonality = numpyro.sample(
-    name=_WEEKDAY + '_present',
-    fn=dist.Binomial(total_count=2, probs=0.5)
-  )
-  with numpyro.plate(name=f"{_WEEKDAY}_plate", size=6):
-    weekday = numpyro.sample(
-        name=_WEEKDAY,
-        fn=custom_priors.get(_WEEKDAY, default_priors[_WEEKDAY]))
-  weekday = jnp.concatenate(arrays=[weekday, jnp.array([0])], axis=0)
-  weekday_series = weekday[jnp.arange(data_size) % 7]
+#   # Optional weekday seasonality
+#   weekday_seasonality = numpyro.sample(
+#     name=_WEEKDAY + '_present',
+#     fn=dist.Binomial(total_count=2, probs=0.5)
+#   )
+#   with numpyro.plate(name=f"{_WEEKDAY}_plate", size=6):
+#     weekday = numpyro.sample(
+#         name=_WEEKDAY,
+#         fn=custom_priors.get(_WEEKDAY, default_priors[_WEEKDAY]))
+#   weekday = jnp.concatenate(arrays=[weekday, jnp.array([0])], axis=0)
+#   weekday_series = weekday[jnp.arange(data_size) % 7]
 
-  # Yearly Seasonality
-  degrees_seasonality = numpyro.sample(
-    name= 'degrees_seasonality',
-    fn=dist.Binomial(total_count=5, probs=0.4)
-  )
-  seasonality = media_transforms.calculate_seasonality(
-    number_periods=data_size,
-    degrees=degrees_seasonality,
-    frequency=frequency,
-    gamma_seasonality=gamma_seasonality
-  )
+#   # Yearly Seasonality
+#   degrees_seasonality = numpyro.sample(
+#     name= 'degrees_seasonality',
+#     fn=dist.Binomial(total_count=5, probs=0.4)
+#   )
+#   seasonality = media_transforms.calculate_seasonality(
+#     number_periods=data_size,
+#     degrees=degrees_seasonality,
+#     frequency=frequency,
+#     gamma_seasonality=gamma_seasonality
+#   )
 
-  # In case of daily data, number of lags should be 13*7.
-  # if transform_function == "carryover" and transform_kwargs and "number_lags" not in transform_kwargs:
-  #   transform_kwargs["number_lags"] = 13 * 7
-  # elif transform_function == "carryover" and not transform_kwargs:
-  #   transform_kwargs = {"number_lags": 13 * 7}
+#   # In case of daily data, number of lags should be 13*7.
+#   # if transform_function == "carryover" and transform_kwargs and "number_lags" not in transform_kwargs:
+#   #   transform_kwargs["number_lags"] = 13 * 7
+#   # elif transform_function == "carryover" and not transform_kwargs:
+#   #   transform_kwargs = {"number_lags": 13 * 7}
 
-  media_transformed = numpyro.deterministic(
-      name="media_transformed",
-      value=ensemble_transform(media_data,
-                               #transform_hyperprior=transform_hyperprior,
-                               custom_priors=custom_priors,
-                               **transform_kwargs if transform_kwargs else {}))
+#   media_transformed = numpyro.deterministic(
+#       name="media_transformed",
+#       value=ensemble_transform(media_data,
+#                                #transform_hyperprior=transform_hyperprior,
+#                                custom_priors=custom_priors,
+#                                **transform_kwargs if transform_kwargs else {}))
 
-  # For national model's case
-  trend = jnp.arange(data_size)
-  media_einsum = "tc, c -> t"  # t = time, c = channel
-  coef_seasonality = 1
+#   # For national model's case
+#   trend = jnp.arange(data_size)
+#   media_einsum = "tc, c -> t"  # t = time, c = channel
+#   coef_seasonality = 1
 
-  # TODO(): Add conversion of prior for HalfNormal distribution.
-  if media_data.ndim == 3:  # For geo model's case
-    trend = jnp.expand_dims(trend, axis=-1)
-    seasonality = jnp.expand_dims(seasonality, axis=-1)
-    media_einsum = "tcg, cg -> tg"  # t = time, c = channel, g = geo
-    if weekday_seasonality:
-      weekday_series = jnp.expand_dims(weekday_series, axis=-1)
-    with numpyro.plate(name="seasonality_plate", size=n_geos):
-      coef_seasonality = numpyro.sample(
-          name=_COEF_SEASONALITY,
-          fn=custom_priors.get(
-              _COEF_SEASONALITY, default_priors[_COEF_SEASONALITY]))
+#   # TODO(): Add conversion of prior for HalfNormal distribution.
+#   if media_data.ndim == 3:  # For geo model's case
+#     trend = jnp.expand_dims(trend, axis=-1)
+#     seasonality = jnp.expand_dims(seasonality, axis=-1)
+#     media_einsum = "tcg, cg -> tg"  # t = time, c = channel, g = geo
+#     if weekday_seasonality:
+#       weekday_series = jnp.expand_dims(weekday_series, axis=-1)
+#     with numpyro.plate(name="seasonality_plate", size=n_geos):
+#       coef_seasonality = numpyro.sample(
+#           name=_COEF_SEASONALITY,
+#           fn=custom_priors.get(
+#               _COEF_SEASONALITY, default_priors[_COEF_SEASONALITY]))
   
-  total_trend = coef_trend * trend ** expo_trend
-  total_seasonality = (
-    seasonality * coef_seasonality
-  )
-  # Day of month effect
-  doms_present = numpyro.sample(
-    name= 'doms_present',
-    fn=dist.Binomial(total_count=2, probs=0.5)
-  )
+#   total_trend = coef_trend * trend ** expo_trend
+#   total_seasonality = (
+#     seasonality * coef_seasonality
+#   )
+#   # Day of month effect
+#   doms_present = numpyro.sample(
+#     name= 'doms_present',
+#     fn=dist.Binomial(total_count=2, probs=0.5)
+#   )
 
-  with numpyro.plate(name=f"{_PARAM_DAY_OF_MONTH}_plate", size=2):
-    dom_param = numpyro.sample(
-      name=_PARAM_DAY_OF_MONTH,
-      fn=custom_priors.get(_PARAM_DAY_OF_MONTH, default_priors[_PARAM_DAY_OF_MONTH])
-    )
-  dom_multiplier = numpyro.sample(
-    name=_MULTIPLIER_DAY_OF_MONTH,
-    fn=custom_priors.get(_MULTIPLIER_DAY_OF_MONTH, default_priors[_MULTIPLIER_DAY_OF_MONTH])
-  )
-  dom_contribs = jbeta.pdf(doms / 32, *dom_param) * dom_multiplier# (1.0 + dom_multiplier)
+#   with numpyro.plate(name=f"{_PARAM_DAY_OF_MONTH}_plate", size=2):
+#     dom_param = numpyro.sample(
+#       name=_PARAM_DAY_OF_MONTH,
+#       fn=custom_priors.get(_PARAM_DAY_OF_MONTH, default_priors[_PARAM_DAY_OF_MONTH])
+#     )
+#   dom_multiplier = numpyro.sample(
+#     name=_MULTIPLIER_DAY_OF_MONTH,
+#     fn=custom_priors.get(_MULTIPLIER_DAY_OF_MONTH, default_priors[_MULTIPLIER_DAY_OF_MONTH])
+#   )
+#   dom_contribs = jbeta.pdf(doms / 32, *dom_param) * dom_multiplier# (1.0 + dom_multiplier)
 
-  if doms_present:
-    total_seasonality += dom_contribs
+#   if doms_present:
+#     total_seasonality += dom_contribs
 
-  # Weekday Seasonality effect
-  if weekday_seasonality:
-    total_seasonality += weekday_series
+#   # Weekday Seasonality effect
+#   if weekday_seasonality:
+#     total_seasonality += weekday_series
 
-  # Total seasonality (to aid in re-distribution later)
-  total_seasonality = numpyro.deterministic(
-    name="total_seasonality",
-    value=total_seasonality
-  )
+#   # Total seasonality (to aid in re-distribution later)
+#   total_seasonality = numpyro.deterministic(
+#     name="total_seasonality",
+#     value=total_seasonality
+#   )
 
-  # Total trend (to aid in re-distribution later)
-  total_trend = numpyro.deterministic(
-    name='total_trend',
-    value=total_trend
-  )
+#   # Total trend (to aid in re-distribution later)
+#   total_trend = numpyro.deterministic(
+#     name='total_trend',
+#     value=total_trend
+#   )
 
-  # expo_trend is B(1, 1) so that the exponent on time is in [.5, 1.5].
-  prediction = (
-      intercept + total_seasonality + total_trend + 
-      jnp.einsum(media_einsum, media_transformed, coef_media))
+#   # expo_trend is B(1, 1) so that the exponent on time is in [.5, 1.5].
+#   prediction = (
+#       intercept + total_seasonality + total_trend + 
+#       jnp.einsum(media_einsum, media_transformed, coef_media))
 
-  # Contribution of control factors
-  if extra_features is not None:
-    plate_prefixes = ("extra_feature",)
-    extra_features_einsum = "tf, f -> t"  # t = time, f = feature
-    extra_features_plates_shape = (extra_features.shape[1],)
-    if extra_features.ndim == 3:
-      plate_prefixes = ("extra_feature", "geo")
-      extra_features_einsum = "tfg, fg -> tg"  # t = time, f = feature, g = geo
-      extra_features_plates_shape = (extra_features.shape[1], *geo_shape)
-    with numpyro.plate_stack(plate_prefixes,
-                             sizes=extra_features_plates_shape):
-      coef_extra_features = numpyro.sample(
-          name=_COEF_EXTRA_FEATURES,
-          fn=custom_priors.get(
-              _COEF_EXTRA_FEATURES, default_priors[_COEF_EXTRA_FEATURES]))
-    extra_features_effect = jnp.einsum(extra_features_einsum,
-                                       extra_features,
-                                       coef_extra_features)
-    prediction += extra_features_effect
+#   # Contribution of control factors
+#   if extra_features is not None:
+#     plate_prefixes = ("extra_feature",)
+#     extra_features_einsum = "tf, f -> t"  # t = time, f = feature
+#     extra_features_plates_shape = (extra_features.shape[1],)
+#     if extra_features.ndim == 3:
+#       plate_prefixes = ("extra_feature", "geo")
+#       extra_features_einsum = "tfg, fg -> tg"  # t = time, f = feature, g = geo
+#       extra_features_plates_shape = (extra_features.shape[1], *geo_shape)
+#     with numpyro.plate_stack(plate_prefixes,
+#                              sizes=extra_features_plates_shape):
+#       coef_extra_features = numpyro.sample(
+#           name=_COEF_EXTRA_FEATURES,
+#           fn=custom_priors.get(
+#               _COEF_EXTRA_FEATURES, default_priors[_COEF_EXTRA_FEATURES]))
+#     extra_features_effect = jnp.einsum(extra_features_einsum,
+#                                        extra_features,
+#                                        coef_extra_features)
+#     prediction += extra_features_effect
 
 
-  mu = numpyro.deterministic(name="mu", value=prediction)
+#   mu = numpyro.deterministic(name="mu", value=prediction)
 
-  numpyro.sample(
-      name="target", fn=dist.Normal(loc=mu, scale=sigma), obs=target_data)
+#   numpyro.sample(
+#       name="target", fn=dist.Normal(loc=mu, scale=sigma), obs=target_data)
