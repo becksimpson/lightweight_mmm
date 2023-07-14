@@ -40,8 +40,7 @@ from numpyro import distributions as dist
 from numpyro.contrib.control_flow import cond
 
 from lightweight_mmm import media_transforms
-# from lightweight_mmm.lightweight_mmm import _NAMES_TO_MODEL_TRANSFORMS
-
+#from lightweight_mmm.lightweight_mmm import _NAMES_TO_MODEL_TRANSFORMS
 
 
 Prior = Union[
@@ -190,8 +189,8 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Prior]:
 
 def _get_transform_default_priors(transform_hyperprior) -> Mapping[str, Prior]:
 
-  # Prior distributions considered
-  transform_prior_lists = _get_transform_default_priors_lists()
+  # # Prior distributions considered
+  # transform_prior_lists = _get_transform_default_priors_lists()
 
   # Generate hyperprior distribution samples for all possible hyper-priors.
   hyperprior_distributions = _get_transform_hyperprior_distributions()
@@ -298,6 +297,7 @@ def _get_transform_default_priors(transform_hyperprior) -> Mapping[str, Prior]:
   })
 
 
+# DEFUNCT
 def _get_transform_default_priors_lists():
   """ First in list is default. """
   return immutabledict.immutabledict({
@@ -338,39 +338,42 @@ def _get_transform_default_priors_lists():
   })
 
 
-# def ensemble_transform(
-#   media_data: jnp.ndarray,
-#   custom_priors: MutableMapping[str, Prior],
-#   **transform_kwargs
-# ):
-#   #TODO: pass in list of potential model functions
-#   model_names = list(TRANSFORM_PRIORS_NAMES.keys())
-#   #   'hill_adstock',
-#   #   'exponential_saturation',
-#   #   'exponential_carryover',
-#   # ]
+def ensemble_transform(
+  media_data: jnp.ndarray,
+  custom_priors: MutableMapping[str, Prior],
+  **transform_kwargs
+):
+  
+  # Choose model and associated function
+  #TODO: pass in list of potential model functions
+  model_names = list(TRANSFORM_PRIORS_NAMES.keys())
+  #   'hill_adstock',
+  #   'exponential_saturation',
+  #   'exponential_carryover',
+  # ]
 
-#   model_selection = numpyro.sample(
-#     name='model_selection',
-#     fn=dist.DiscreteUniform(low=0, high=len(model_names))
-#   )
-#   model_name = model_names[model_selection]
-#   model_transform = _NAMES_TO_MODEL_TRANSFORMS[model_name]
+  model_selection = numpyro.sample(
+    name='model_selection',
+    fn=dist.DiscreteUniform(low=0, high=len(model_names))
+  )
+  model_name = model_names[model_selection]
+  model_transform = _NAMES_TO_MODEL_TRANSFORMS[model_name]
 
-#   # Transform hyperprior - bias towards using lists of priors
-#   transform_hyperprior = numpyro.sample(
-#     name='transform_hyperprior',
-#     fn=dist.Binomial(total_count=1, probs=0.2)
-#   )
+  # Transform hyperprior - bias towards using lists of priors
+  # transform_hyperprior = numpyro.sample(
+  #   name='transform_hyperprior',
+  #   fn=dist.Binomial(total_count=1, probs=0.2)
+  # )
+  transform_hyperprior = True
 
-#   # Create custom priors
+  # Create custom priors
 
 
 
-#   # Use if not hyperprior
+  # Use if not hyperprior
   
 
-#   # Call transform function & return
+  # Call transform function & return
   
 
   
@@ -466,7 +469,7 @@ def transform_exponential_carryover(
       data=media_data,
       ad_effect_retention_rate=ad_effect_retention_rate,
       peak_effect_delay=peak_effect_delay,
-      number_lags=28)
+      number_lags=60) # Max lags allowed is 2months
 
   with numpyro.plate(name=f"{_SATURATION}_plate", size=media_data.shape[1]):
     slopes = numpyro.sample(
