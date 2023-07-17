@@ -33,7 +33,7 @@ import seaborn as sns
 from sklearn import metrics
 
 from lightweight_mmm import lightweight_mmm
-from lightweight_mmm import models
+from lightweight_mmm import models, models_ensemble
 from lightweight_mmm import preprocessing
 from lightweight_mmm import utils
 
@@ -1476,6 +1476,7 @@ def _collect_features_for_prior_posterior_plot(
       models._COEF_TREND,
       models._INTERCEPT,
       models._SIGMA,
+      
   ]
   channel_level_features = [
       models._AD_EFFECT_RETENTION_RATE,
@@ -1484,12 +1485,18 @@ def _collect_features_for_prior_posterior_plot(
       models._LAG_WEIGHT,
       models._PEAK_EFFECT_DELAY,
       models._SLOPE,
+      models._SATURATION,
       "channel_coef_media",
       "coef_media",
   ]
-  seasonal_features = [models._GAMMA_SEASONALITY]
+  seasonal_features = [
+    models._GAMMA_SEASONALITY
+  ]
   if media_mix_model._weekday_seasonality:
     seasonal_features.append(models._WEEKDAY)
+  if media_mix_model._month_seasonality:
+    seasonal_features += [models._PARAM_DAY_OF_MONTH, models._MULTIPLIER_DAY_OF_MONTH]
+
   other_features = list(set(features) - set(geo_level_features) -
                         set(channel_level_features) - set(seasonal_features))
 
@@ -1551,7 +1558,30 @@ def plot_prior_and_posterior(
 
   default_priors = {
       **models._get_default_priors(),
-      **models._get_transform_default_priors(media_mix_model.transform_hyperprior)[media_mix_model.model_name]
+      #**models._get_transform_default_priors(media_mix_model.transform_hyperprior)[media_mix_model.model_name]
+  }
+
+  # No hyperpriors - known priors
+  # Prior default distributions exist where model is known, fixed type 
+  if hasattr(media_mix_model, 'model_name'):
+    # if not media_mix_model.transform_hyperprior:
+    #   default_priors = {
+    #     **default_priors,
+    #     **models._get_transform_default_priors(False)[media_mix_model.model_name]
+    #   }
+    print('Not implemented!!')
+  else:
+    if not media_mix_model.transform_hyperprior:
+      default_priors = {
+        **default_priors,
+        **models_ensemble._get_transform_prior_distributions()
+      }
+
+  #TODO: Plots for hyperpriors
+  transform_hyperpriors = {
+    f'{prior}_{hyperprior}': dist
+    for prior, d in models_ensemble._get_transform_hyperprior_distributions().items()
+    for hyperprior, dist in d.items()
   }
 
   kwargs_for_helper_function = {
@@ -1574,12 +1604,16 @@ def plot_prior_and_posterior(
         raise ValueError(f"{feature} cannot be plotted.")
     elif feature in default_priors.keys():
       prior_distribution = default_priors[feature]
+    elif feature in transform_hyperpriors.keys():
+      prior_distribution = transform_hyperpriors[feature]
     elif feature in ("channel_coef_media", "coef_media"):
       # We have to fill this in later since the prior varies by channel.
       prior_distribution = None
     else:
       # This should never happen.
-      raise ValueError(f"{feature} has no prior specified.")
+      #raise ValueError(f"{feature} has no prior specified.")
+      print(f'{feature} not found to have prior distr')
+      continue
     kwargs_for_helper_function["prior_distribution"] = prior_distribution
 
     if feature == models._COEF_EXTRA_FEATURES:
@@ -1638,8 +1672,18 @@ def plot_prior_and_posterior(
         # if feature == 'ad_effect_retention_rate':
         #   fig.axes[i_ax - 1].set_xlim(0, 1.0)
 
+    if feature == models._WEEKDAY:
+      for i_day in range(6):
+        subplot_title = f"{feature}, day {i_day}"
+        posterior_samples = np.array(media_mix_model.trace[feature][:, i_day])
+        (fig, gridspec_fig,
+         i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+             posterior_samples=posterior_samples,
+             subplot_title=subplot_title,
+             i_ax=i_ax,
+             **kwargs_for_helper_function)
 
-    if feature in seasonal_features:
+    if feature == models._GAMMA_SEASONALITY:
       for i_season in range(media_mix_model._degrees_seasonality):
         for j_season in range(2):
           sin_or_cos = "sin" if j_season == 0 else "cos"
@@ -1653,8 +1697,22 @@ def plot_prior_and_posterior(
                subplot_title=subplot_title,
                i_ax=i_ax,
                **kwargs_for_helper_function)
+          
+    if feature == models._PARAM_DAY_OF_MONTH:
+      for i_param in range(2):
+        alpha_or_beta = "alpha" if i_param == 0 else "beta"
+        subplot_title = f"{feature}, param:{alpha_or_beta}"
+        posterior_samples = np.array(media_mix_model.trace[feature][:,
+                                                                    i_param])
+        (fig, gridspec_fig,
+          i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+              posterior_samples=posterior_samples,
+              subplot_title=subplot_title,
+              i_ax=i_ax,
+              **kwargs_for_helper_function)
+    
 
-    if feature in other_features and feature != models._COEF_EXTRA_FEATURES:
+    if feature in [*other_features, models._MULTIPLIER_DAY_OF_MONTH] and feature != models._COEF_EXTRA_FEATURES:
       subplot_title = f"{feature}"
       posterior_samples = np.array(media_mix_model.trace[feature])
       (fig, gridspec_fig,

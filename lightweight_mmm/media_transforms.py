@@ -20,6 +20,79 @@ from typing import Union
 import jax
 import jax.numpy as jnp
 
+MAX_DEGREES_SEASONALITY = 4
+
+
+#@functools.partial(jax.jit, static_argnums=[0, 1])
+def calculate_seasonality_ensemble(
+    number_periods: int,
+    degrees: int,
+    gamma_seasonality: Union[int, float, jnp.ndarray],
+    frequency: int = 52,
+) -> jnp.ndarray:
+  """Calculates cyclic variation seasonality using Fourier terms.
+
+  For detailed info check:
+    https://en.wikipedia.org/wiki/Seasonality#Modeling
+
+  Args:
+    number_periods: Number of seasonal periods in the data. Eg. for 1 year of
+      seasonal data it will be 52, for 3 years of the same kind 156.
+    degrees: Number of degrees to use. Must be greater or equal than 1.
+    gamma_seasonality: Factor to multiply to each degree calculation. Shape must
+      be aligned with the number of degrees.
+    frequency: Frequency of the seasonality being computed. By default is 52 for
+      weekly data (52 weeks in a year).
+
+  Returns:
+    An array with the seasonality values.
+  """
+
+  seasonality_range = jnp.expand_dims(a=jnp.arange(number_periods), axis=-1)
+  degrees_range = jnp.arange(1, degrees + 1) # MAX_DEGREES_SEASONALITY
+  inner_value = seasonality_range * 2 * jnp.pi * degrees_range / frequency
+  season_matrix_sin = jnp.sin(inner_value)
+  season_matrix_cos = jnp.cos(inner_value)
+  season_matrix = jnp.concatenate([
+      jnp.expand_dims(a=season_matrix_sin, axis=-1),
+      jnp.expand_dims(a=season_matrix_cos, axis=-1)
+  ],
+                                  axis=-1)
+  
+  # gamma_seasonality = jax.lax.dynamic_slice(
+  #   gamma_seasonality,
+  #   (0, 0), (2, degrees)
+  # )
+  # gamma_seasonality = jax.lax.dynamic_slice(
+  #   gamma_seasonality,
+  #   (0, 0), (1, degrees)
+  # )
+  waves = (season_matrix * gamma_seasonality).sum(axis=2)
+
+  # return jnp.where(
+  #   jnp.repeat(
+  #     (jnp.arange(waves.shape[1]) < degrees).reshape(-1, 1),
+  #     number_periods,
+  #     axis=1
+  #   ),
+  #   waves.T,
+  #   jnp.zeros((MAX_DEGREES_SEASONALITY, number_periods))
+  # ).T.sum(axis=1)
+
+  return waves.sum(axis=1)
+
+  return jax.lax.dynamic_slice(
+    waves,
+    (0, 0), (waves.shape[0], degrees)
+  ).sum(axis=1)
+  
+  # return jnp.where(
+  #   jnp.arange(waves.shape[1]) <= degrees,
+  #   arr,
+  #   0
+  # ).sum(axis=1)
+  # .sum(axis=1)
+
 
 @functools.partial(jax.jit, static_argnums=[0, 1])
 def calculate_seasonality(
@@ -112,7 +185,9 @@ def exponential_saturation(data: jnp.ndarray, slope: jnp.ndarray) -> jnp.ndarray
 
 @jax.jit
 def hill(data: jnp.ndarray, half_max_effective_concentration: jnp.ndarray,
-         slope: jnp.ndarray) -> jnp.ndarray:
+         slope: jnp.ndarray,
+         normalise: bool = False
+  ) -> jnp.ndarray:
   """Calculates the hill function for a given array of values.
 
   Refer to the following link for detailed information on this equation:
@@ -128,7 +203,15 @@ def hill(data: jnp.ndarray, half_max_effective_concentration: jnp.ndarray,
   """
   save_transform = apply_exponent_safe(
       data=data / half_max_effective_concentration, exponent=-slope)
-  return jnp.where(save_transform == 0, x=0, y=1. / (1 + save_transform))
+  hill_media = jnp.where(save_transform == 0, x=0, y=1. / (1 + save_transform))
+
+  # Normalisation keeps linear scaling at half_max_effective_concentration point
+  return jax.lax.cond(
+    normalise,
+    lambda hill_media: hill_media * (2 * half_max_effective_concentration),
+    lambda hill_media: hill_media,
+    operand=hill_media
+  )
 
 
 @functools.partial(jax.vmap, in_axes=(1, 1, None), out_axes=1)
