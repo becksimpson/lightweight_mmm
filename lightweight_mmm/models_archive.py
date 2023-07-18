@@ -21,16 +21,13 @@ three different models.
   - Hill-Adstock
   - Carryover
 """
-import functools
-from itertools import chain
 import sys
 #  pylint: disable=g-import-not-at-top
 if sys.version_info >= (3, 8):
   from typing import Protocol
 else:
   from typing_extensions import Protocol
-from typing import List
-
+import functools
 
 from typing import Any, Dict, Mapping, MutableMapping, Optional, Sequence, Union
 
@@ -53,6 +50,7 @@ Prior = Union[
     float
 ]
 
+
 class TransformFunction(Protocol):
 
   def __call__(
@@ -61,6 +59,7 @@ class TransformFunction(Protocol):
       custom_priors: MutableMapping[str, Prior],
       **kwargs: Any) -> jnp.ndarray:
     ...
+
 
 _INTERCEPT = "intercept"
 _COEF_TREND = "coef_trend"
@@ -93,8 +92,31 @@ _AD_EFFECT_RETENTION_RATE = "ad_effect_retention_rate"
 _PEAK_EFFECT_DELAY = "peak_effect_delay"
 _SATURATION = 'saturation'
 
+TRANSFORM_PRIORS_NAMES = immutabledict.immutabledict({
+    "carryover":
+        frozenset((_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY, _EXPONENT)),
+    "adstock":
+        frozenset((_EXPONENT, _LAG_WEIGHT)),
+    "hill_adstock":
+        frozenset((_LAG_WEIGHT, _HALF_MAX_EFFECTIVE_CONCENTRATION, _SLOPE)),
+    "exponential_carryover":
+      frozenset((_SATURATION, _AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY)),
+    "exponential_adstock":
+        frozenset((_SATURATION, _LAG_WEIGHT))
+}) 
 
 GEO_ONLY_PRIORS = frozenset((_COEF_SEASONALITY,))
+
+_HYPERPRIOR_PRIOR_TRANSFORM_DISTRIBUTIONS = immutabledict.immutabledict({
+  _SATURATION: dist.HalfNormal, #dist.Gamma,
+  _AD_EFFECT_RETENTION_RATE: dist.Beta,
+  _HALF_MAX_EFFECTIVE_CONCENTRATION: dist.Gamma,
+  _SLOPE: dist.Gamma, 
+  _PEAK_EFFECT_DELAY: dist.HalfNormal,
+  _LAG_WEIGHT: dist.Beta,
+  _EXPONENT: dist.Beta
+})
+
 
 def _get_default_priors() -> Mapping[str, Prior]:
   # Since JAX cannot be called before absl.app.run in tests we get default
@@ -112,25 +134,44 @@ def _get_default_priors() -> Mapping[str, Prior]:
       _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(0.5),
   })
 
+#def _get_hyperparameter_hyperprior_distributions"
+  # return immutabledict.immutabledict({
+  #   # Range 1..5, highest prob 2
+  #   _DEGREE_SEASONALITY: dist.Binomial(total_count=5, probs=0.4)
+  # })
 
 def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union[float, Prior]]]:
   return immutabledict.immutabledict({
     # For Beta Distribution
     _EXPONENT: immutabledict.immutabledict({
+        #'concentration1': dist.Uniform(1., 9.),
+        #'concentration0': dist.Uniform(1., 9.),
         'concentration': dist.TruncatedNormal(0., 3., low=0.0, high=8.0)
+        #'concentration': dist.Uniform(0., 8.),
+        #'concentration': dist.HalfNormal(3., constraint=dist.constraints.less_than(8.0))
+        # TODO CONSTRAINED HALFNORMAL DISTRIBUTION
+        # 'concentration': dist.TruncatedDistribution(
+        #   dist.HalfNormal(3.),
+        #   high=8.0
+        # )
+        
     }),
     # Adstock lag_weight (Beta), [0.0, 1.0], higher, more carryover
     _LAG_WEIGHT: immutabledict.immutabledict({
+        #'concentration1': dist.Uniform(1., 9.),
+        #'concentration0': dist.Uniform(1., 9.)
         'concentration': dist.Uniform(0., 8.),
     }),
     # Carryover delay to peak (halfnormal)
     _PEAK_EFFECT_DELAY: immutabledict.immutabledict({
+        #'scale': dist.Uniform(1., 10.)
         # Median 1.6, <1 27%, longtail
         'scale': dist.LogNormal(0.5, 0.8)
     }),
     # hill saturation (gamma) create range 0.1 -> 2/3ish, 0.1 -> 1.0 peak
     _SLOPE: immutabledict.immutabledict({
         'concentration': dist.Uniform(1.5, 3.),
+        #'rate': dist.Uniform(low=2.0, high=2.0)
         'rate': 2.0 # Fixed to contrain hyperparameter distribution to appropriate range
     }),
     # Half point most effective, gamma
@@ -138,13 +179,18 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     _HALF_MAX_EFFECTIVE_CONCENTRATION: immutabledict.immutabledict({
       'concentration': dist.Uniform(2., 5.),
       'rate': 2.0
+      #'rate': dist.Uniform(low=2.0, high=2.0)
     }),
     # Retention rate of advertisement Beta
     _AD_EFFECT_RETENTION_RATE: immutabledict.immutabledict({
+        #'concentration1': dist.Uniform(1., 9.),
+        #'concentration0': dist.Uniform(1., 9.),
         'concentration': dist.Uniform(0., 8.),
     }),
     # Saturation for exponential saturation
     _SATURATION: immutabledict.immutabledict({
+        #'concentration': dist.Uniform(1., 4.),
+        #'rate': dist.Uniform(0.1, 1.)
         # 1.34 mean --> HalfNormal(1.34)
         'scale': dist.LogNormal(loc=0.3, scale=0.3)
     }),
@@ -165,48 +211,178 @@ def _get_transform_prior_distributions() -> Mapping[str, Prior]:
     _SLOPE: dist.Gamma(concentration= 1., rate= 1.)
   })
 
-def _get_transform_prior_hyperprior_distribution(
-    prior_name: str
-) -> Mapping[str, Mapping[str, jnp.ndarray]]:
-  
-  hyperprior_distributions = _get_transform_hyperprior_distributions()[prior_name]
 
-  # Sample from hyperprior distributions
+def _get_transform_default_priors(transform_hyperprior) -> Mapping[str, Prior]:
+
+  # # Prior distributions considered
+  # transform_prior_lists = _get_transform_default_priors_lists()
+
+  # Generate hyperprior distribution samples for all possible hyper-priors.
+  prior_distributions = _get_transform_prior_distributions()
+  hyperprior_distributions = _get_transform_hyperprior_distributions()
   hyperprior_samples = {
-    hyperprior_name: numpyro.sample(
-      name=prior_name + '_' + hyperprior_name,
-      fn=distr
-    ) if not isinstance(distr, float) else distr
-    for hyperprior_name, distr in hyperprior_distributions.items()
+    prior_name: {
+      hyperprior_name: numpyro.sample(
+        name=prior_name + '_' + hyperprior_name,
+        fn=distr
+      ) if not isinstance(distr, float) else distr
+      for hyperprior_name, distr in distrs.items()
+    }
+    for prior_name, distrs in hyperprior_distributions.items()
   }
 
-  prior_fn = _get_transform_prior_distributions()[prior_name].__class__
+  def get_prior(prior_name):
+    """ We don't insist on prior_defaults sharing the same distribution as hyperpriors"""
+    fn = _HYPERPRIOR_PRIOR_TRANSFORM_DISTRIBUTIONS[prior_name]
+    return cond(
+        transform_hyperprior,
+        lambda _: (
+          fn(**hyperprior_samples[prior_name])
+          if fn != dist.Beta
+          else fn(
+            concentration0= 1 + hyperprior_samples[prior_name]['concentration'],
+            concentration1= 9 - hyperprior_samples[prior_name]['concentration']
+          )
+        ),
+        # Use default prior
+        lambda _: prior_distributions[prior_name],
+        None
+      )
+  
+  # return immutabledict.immutabledict({
+  #     "carryover": immutabledict.immutabledict
+  #       ({
+  #         get_prior(param,
+  #           transform_prior_lists[param][
+  #             prior_indexes.get('carryover', {}).get(param, 0)
+  #           ]
+  #         )
+  #         for param in [_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY, _EXPONENT]
+  #       })
+  # })
 
-  if prior_fn != dist.Beta:
-    return prior_fn(
-      **hyperprior_samples
-    )
-  # Beta hyperprior specs are symmetric, parameterized around a concentration
-  return prior_fn(
-    concentration0= 1 + hyperprior_samples['concentration'],
-    concentration1= 9 - hyperprior_samples['concentration']
-  )
+  # return immutabledict.immutabledict({
+  #   prior_name: get_prior(prior_name)
+  #   for prior_name in list(_get_transform_prior_distributions().keys())
+  # })
 
-_ENSEMBLE_ADSTOCK_TRANSFORMS = immutabledict.immutabledict({
-  (_LAG_WEIGHT,): media_transforms.adstock,
-  (_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY): media_transforms.carryover
-})
-_ENSEMBLE_SATURATION_TRANSFORMS = immutabledict.immutabledict({
-  #(_EXPONENT,): media_transforms.apply_exponent_safe,
-  (_SATURATION,): media_transforms.exponential_saturation,
-  (_HALF_MAX_EFFECTIVE_CONCENTRATION, _SLOPE): media_transforms.hill,
-})
+  return immutabledict.immutabledict({
+    k: {
+      v: get_prior(v)
+      for v in TRANSFORM_PRIORS_NAMES[k]
+    }
+    for k in TRANSFORM_PRIORS_NAMES.keys()
+  })
 
+  return immutabledict.immutabledict({
+      "carryover": immutabledict.immutabledict
+          ({
+
+            _AD_EFFECT_RETENTION_RATE: get_prior(
+              _AD_EFFECT_RETENTION_RATE,
+              dist.Beta(concentration1=1., concentration0=1.)
+              #transform_priors_lists[_AD_EFFECT_RETENTION_RATE]
+            ),
+            _PEAK_EFFECT_DELAY: get_prior(_PEAK_EFFECT_DELAY,
+              dist.HalfNormal(scale=2.)
+              #transform_priors_lists[_PEAK_EFFECT_DELAY][]
+            ),
+            _EXPONENT: get_prior(_EXPONENT,
+              #transform_priors_lsits[_EXPONENT]
+              dist.Beta(concentration1=9., concentration0=1.)
+            )
+          }),
+      "adstock":immutabledict.immutabledict
+        ({
+          _EXPONENT: get_prior(_EXPONENT,
+            dist.Beta(concentration1=9., concentration0=1.)),
+          _LAG_WEIGHT: get_prior(_LAG_WEIGHT,
+            dist.Beta(concentration1=2., concentration0=1.))
+        }),
+      "hill_adstock":
+          immutabledict.immutabledict({
+              _LAG_WEIGHT: get_prior(_LAG_WEIGHT,
+                dist.Beta(concentration1= 2., concentration0= 1.)
+              ),
+              _HALF_MAX_EFFECTIVE_CONCENTRATION:get_prior(_HALF_MAX_EFFECTIVE_CONCENTRATION,
+                dist.Gamma(concentration= 1., rate= 1.)
+              ),
+              _SLOPE: get_prior(_SLOPE, dist.Gamma(concentration= 1., rate= 1.))
+          }),
+      "exponential_carryover": 
+          immutabledict.immutabledict({
+            _SATURATION: get_prior(_SATURATION,
+              dist.HalfNormal(scale=2.)
+            ),
+            _AD_EFFECT_RETENTION_RATE: get_prior(_AD_EFFECT_RETENTION_RATE,
+              dist.Beta(concentration1=1., concentration0= 1.)
+            ),
+            _PEAK_EFFECT_DELAY: get_prior(_PEAK_EFFECT_DELAY,
+              dist.HalfNormal(scale= 2.)
+            )
+      }),
+      "exponential_adstock":
+        immutabledict.immutabledict({
+          # Strongest assumption no saturatio, linear, near 0
+          _SATURATION: get_prior(_SATURATION, 
+            #{'concentration': 1., 'rate': 1.}
+            dist.HalfNormal(scale= 2.)
+          ),
+          # Strongest assumption no lag effect, near 1.
+          # concentration1 is alpha
+          _LAG_WEIGHT: get_prior(_LAG_WEIGHT, 
+              dist.Beta(concentration1= 1., concentration0= 3.)
+          )
+        })
+  })
+
+
+# DEFUNCT
+def _get_transform_default_priors_lists():
+  """ First in list is default. """
+  return immutabledict.immutabledict({
+    _SATURATION: [
+      numpyro.distributions.HalfNormal(2.0),
+      numpyro.distributions.HalfNormal(2.5),
+      numpyro.distributions.HalfNormal(1.5)
+    ],
+    _LAG_WEIGHT: [
+      numpyro.distributions.Beta(concentration1=1., concentration0=3.),
+      numpyro.distributions.Beta(concentration1=1., concentration0=1.),
+      numpyro.distributions.Beta(concentration1=4., concentration0=6.),
+    ],
+    _HALF_MAX_EFFECTIVE_CONCENTRATION: [
+      dist.Gamma(concentration=1., rate=1.), # Original by MMM
+      numpyro.distributions.LogNormal(loc=0.1, scale=0.5),
+      numpyro.distributions.LogNormal(loc=0.5, scale=0.5),
+    ],
+    _AD_EFFECT_RETENTION_RATE: [
+      numpyro.distributions.Beta(concentration1=1., concentration0=1.),
+      numpyro.distributions.Beta(concentration1=1., concentration0=3.),
+      numpyro.distributions.Beta(concentration1=4., concentration0=6.),
+    ],
+    _PEAK_EFFECT_DELAY: [
+      numpyro.distributions.HalfNormal(scale=2.),
+      numpyro.distributions.HalfNormal(scale=1.),
+    ],
+    _EXPONENT: [
+      numpyro.distributions.Beta(concentration1=9., concentration0=1.),
+      numpyro.distributions.Beta(concentration1=5., concentration0=1.),
+      numpyro.distributions.Beta(concentration1=1., concentration0=1.),
+    ],
+    _SLOPE: [
+      numpyro.distributions.Gamma(concentration=1., rate=1.),
+      numpyro.distributions.Gamma(concentration=3., rate=1.),
+      numpyro.distributions.HalfNormal(scale=2.0),
+    ]
+  })
 
 def transform_exponential_adstock(
                     media_data: jnp.ndarray,
-                    transform_samples: jnp.ndarray,
-                    adstock_normalise: bool = True
+                    transform_hyperprior: bool,
+                    #default_priors: MutableMapping[str, Prior],
+                    custom_priors: MutableMapping[str, Prior],
+                    normalise: bool = True
 ) -> jnp.ndarray:
   """Transforms the input data with exponetial saturation function and carryover
 
@@ -215,15 +391,35 @@ def transform_exponential_adstock(
   Args:
     media_data: Media data to be transformed. It is expected to have 2 dims for
       national models and 3 for geo models.
-    transform_samples
+    custom_priors: The custom priors we want the model to take instead of the
+      default ones. The possible names of parameters for exponential_adstock
+      are "slope".
+
   Returns:
     The transformed media data.
   """
-  lag_weight = transform_samples[_LAG_WEIGHT]
-  slopes = transform_samples[_SATURATION]
+  transform_priors = _get_transform_default_priors(transform_hyperprior)['exponential_adstock']
+
+  with numpyro.plate(name=f"{_LAG_WEIGHT}_plate",
+                     size=media_data.shape[1]):
+    lag_weight = numpyro.sample(
+        name=_LAG_WEIGHT,
+        fn=custom_priors.get(_LAG_WEIGHT,               
+            transform_priors[_LAG_WEIGHT]
+      )
+    )
 
   adstock = media_transforms.adstock(
-      data=media_data, lag_weight=lag_weight, normalise=adstock_normalise)
+      data=media_data, lag_weight=lag_weight, normalise=normalise)
+
+  with numpyro.plate(name=f"{_SATURATION}_plate", size=media_data.shape[1]):
+
+    slopes = numpyro.sample(
+        name=_SATURATION,
+        fn=custom_priors.get(_SATURATION,               
+          transform_priors[_SATURATION]
+      )
+    )
 
   return media_transforms.exponential_saturation(
     data=adstock, slope=slopes
@@ -231,8 +427,10 @@ def transform_exponential_adstock(
 
 def transform_exponential_carryover(
                     media_data: jnp.ndarray,
-                    transform_samples,
-                    number_lags: int = 60
+                    #default_priors: MutableMapping[str, Prior],
+                    transform_hyperprior:bool,
+                    custom_priors: MutableMapping[str, Prior],
+                    #normalise: bool = True
 ) -> jnp.ndarray:
   """Transforms the input data with exponetial saturation function and carryover
 
@@ -248,30 +446,44 @@ def transform_exponential_carryover(
   Returns:
     The transformed media data.
   """
-  peak_effect_delay = transform_samples[_PEAK_EFFECT_DELAY]
-  ad_effect_retention_rate = transform_samples[_AD_EFFECT_RETENTION_RATE]
-  slopes = transform_samples[_SATURATION]
+  transform_default_priors = _get_transform_default_priors(transform_hyperprior)["exponential_carryover"]
 
-  # TODO Fix number_lags carrythrough
+  with numpyro.plate(name=f"{_AD_EFFECT_RETENTION_RATE}_plate",
+                     size=media_data.shape[1]):
+    ad_effect_retention_rate = numpyro.sample(
+        name=_AD_EFFECT_RETENTION_RATE,
+        fn=custom_priors.get(
+            _AD_EFFECT_RETENTION_RATE,
+            transform_default_priors[_AD_EFFECT_RETENTION_RATE]))
+
+  with numpyro.plate(name=f"{_PEAK_EFFECT_DELAY}_plate",
+                    size=media_data.shape[1]):
+    peak_effect_delay = numpyro.sample(
+        name=_PEAK_EFFECT_DELAY,
+        fn=custom_priors.get(
+            _PEAK_EFFECT_DELAY, transform_default_priors[_PEAK_EFFECT_DELAY]))
+
   carryover = media_transforms.carryover(
       data=media_data,
       ad_effect_retention_rate=ad_effect_retention_rate,
       peak_effect_delay=peak_effect_delay,
       number_lags=60) # Max lags allowed is 2months
 
-  # with numpyro.plate(name=f"{_SATURATION}_plate", size=media_data.shape[1]):
-  #   slopes = numpyro.sample(
-  #     name=_SATURATION,
-  #     fn=custom_priors.get(_SATURATION, transform_default_priors[_SATURATION])
-  #   )
+  with numpyro.plate(name=f"{_SATURATION}_plate", size=media_data.shape[1]):
+    slopes = numpyro.sample(
+      name=_SATURATION,
+      fn=custom_priors.get(_SATURATION, transform_default_priors[_SATURATION])
+    )
   return media_transforms.exponential_saturation(
     data=carryover, slope=slopes
   )
 
 
 def transform_adstock(media_data: jnp.ndarray,
-                      transform_samples,
-                      adstock_normalise: bool = True) -> jnp.ndarray:
+                      transform_hyperprior:bool,
+                      #default_priors: MutableMapping[str, Prior],
+                      custom_priors: MutableMapping[str, Prior],
+                      normalise: bool = True) -> jnp.ndarray:
   """Transforms the input data with the adstock function and exponent.
 
   Args:
@@ -280,20 +492,32 @@ def transform_adstock(media_data: jnp.ndarray,
     custom_priors: The custom priors we want the model to take instead of the
       default ones. The possible names of parameters for adstock and exponent
       are "lag_weight" and "exponent".
-    adstock_normalise: Whether to normalise the output values.
+    normalise: Whether to normalise the output values.
 
   Returns:
     The transformed media data.
   """
-  exponent = transform_samples[_EXPONENT]
-  lag_weight = transform_samples[_LAG_WEIGHT]
+  transform_default_priors = _get_transform_default_priors(transform_hyperprior)["adstock"]
+  with numpyro.plate(name=f"{_LAG_WEIGHT}_plate",
+                     size=media_data.shape[1]):
+    lag_weight = numpyro.sample(
+        name=_LAG_WEIGHT,
+        fn=custom_priors.get(_LAG_WEIGHT,
+                             transform_default_priors[_LAG_WEIGHT]))
+
+  with numpyro.plate(name=f"{_EXPONENT}_plate",
+                     size=media_data.shape[1]):
+    exponent = numpyro.sample(
+        name=_EXPONENT,
+        fn=custom_priors.get(_EXPONENT,
+                             transform_default_priors[_EXPONENT]))
 
   if media_data.ndim == 3:
     lag_weight = jnp.expand_dims(lag_weight, axis=-1)
     exponent = jnp.expand_dims(exponent, axis=-1)
 
   adstock = media_transforms.adstock(
-      data=media_data, lag_weight=lag_weight, normalise=adstock_normalise)
+      data=media_data, lag_weight=lag_weight, normalise=normalise)
 
   n = media_transforms.apply_exponent_safe(data=adstock, exponent=exponent)
 
@@ -301,23 +525,44 @@ def transform_adstock(media_data: jnp.ndarray,
 
 
 def transform_hill_adstock(media_data: jnp.ndarray,
-                           transform_samples,
-                           saturation_normalise: bool = True,
-                           adstock_normalise: bool = True) -> jnp.ndarray:
+                           transform_hyperprior:bool, 
+                           #default_priors: MutableMapping[str, Prior],
+                           custom_priors: MutableMapping[str, Prior],
+                           normalise: bool = True) -> jnp.ndarray:
   """Transforms the input data with the adstock and hill functions.
 
   Args:
     media_data: Media data to be transformed. It is expected to have 2 dims for
       national models and 3 for geo models.
-    adstock_normalise: Whether to normalise the output values, so adstock contribution sums to 1
-    saturation_normalise: Whether to normalise so 0.5 input = 0.5 output, ensure 50% linearity.
+    custom_priors: The custom priors we want the model to take instead of the
+      default ones. The possible names of parameters for hill_adstock and
+      exponent are "lag_weight", "half_max_effective_concentration" and "slope".
+    normalise: Whether to normalise the output values.
 
   Returns:
     The transformed media data.
   """
-  lag_weight = transform_samples[_LAG_WEIGHT]
-  half_max_effective_concentration = transform_samples[_HALF_MAX_EFFECTIVE_CONCENTRATION]
-  slope = transform_samples[_SLOPE]
+  transform_default_priors = _get_transform_default_priors(transform_hyperprior)["hill_adstock"]
+  with numpyro.plate(name=f"{_LAG_WEIGHT}_plate",
+                     size=media_data.shape[1]):
+    lag_weight = numpyro.sample(
+        name=_LAG_WEIGHT,
+        fn=custom_priors.get(_LAG_WEIGHT,
+                             transform_default_priors[_LAG_WEIGHT]))
+
+  with numpyro.plate(name=f"{_HALF_MAX_EFFECTIVE_CONCENTRATION}_plate",
+                     size=media_data.shape[1]):
+    half_max_effective_concentration = numpyro.sample(
+        name=_HALF_MAX_EFFECTIVE_CONCENTRATION,
+        fn=custom_priors.get(
+            _HALF_MAX_EFFECTIVE_CONCENTRATION,
+            transform_default_priors[_HALF_MAX_EFFECTIVE_CONCENTRATION]))
+
+  with numpyro.plate(name=f"{_SLOPE}_plate",
+                     size=media_data.shape[1]):
+    slope = numpyro.sample(
+        name=_SLOPE,
+        fn=custom_priors.get(_SLOPE, transform_default_priors[_SLOPE]))
 
   if media_data.ndim == 3:
     lag_weight = jnp.expand_dims(lag_weight, axis=-1)
@@ -327,158 +572,72 @@ def transform_hill_adstock(media_data: jnp.ndarray,
 
   return media_transforms.hill(
       data=media_transforms.adstock(
-          data=media_data, lag_weight=lag_weight, normalise=adstock_normalise),
+          data=media_data, lag_weight=lag_weight, normalise=normalise),
       half_max_effective_concentration=half_max_effective_concentration,
-      slope=slope,
-      normalise=saturation_normalise
-    )
+      slope=slope)
+
+
 
 def transform_carryover(media_data: jnp.ndarray,
-                        transform_samples,
-                        number_lags: int = 60,
+                        transform_hyperprior:bool, 
+                        custom_priors: MutableMapping[str, Prior],
+                        number_lags: int = 13,
+                        exponent: float = None,
+                        peak_effect_delay:float= None
                         ) -> jnp.ndarray:
   """Transforms the input data with the carryover function and exponent.
 
   Args:
     media_data: Media data to be transformed. It is expected to have 2 dims for
       national models and 3 for geo models.
-    transform_samples:
+    custom_priors: The custom priors we want the model to take instead of the
+      default ones. The possible names of parameters for carryover and exponent
+      are "ad_effect_retention_rate_plate", "peak_effect_delay_plate" and
+      "exponent".
     number_lags: Number of lags for the carryover function.
 
   Returns:
     The transformed media data.
   """
+  transform_default_priors = _get_transform_default_priors(transform_hyperprior)["carryover"]
+  with numpyro.plate(name=f"{_AD_EFFECT_RETENTION_RATE}_plate",
+                     size=media_data.shape[1]):
+    ad_effect_retention_rate = numpyro.sample(
+        name=_AD_EFFECT_RETENTION_RATE,
+        fn=custom_priors.get(
+            _AD_EFFECT_RETENTION_RATE,
+            transform_default_priors[_AD_EFFECT_RETENTION_RATE]))
+
+  if peak_effect_delay is None:
+    with numpyro.plate(name=f"{_PEAK_EFFECT_DELAY}_plate",
+                      size=media_data.shape[1]):
+      peak_effect_delay = numpyro.sample(
+          name=_PEAK_EFFECT_DELAY,
+          fn=custom_priors.get(
+              _PEAK_EFFECT_DELAY, transform_default_priors[_PEAK_EFFECT_DELAY]))
+  else:
+    peak_effect_delay = jnp.ones(media_data.shape[1]) * peak_effect_delay
+
+  if exponent is None:
+    with numpyro.plate(name=f"{_EXPONENT}_plate",
+                      size=media_data.shape[1]):
+      exponent = numpyro.sample(
+          name=_EXPONENT,
+          fn=custom_priors.get(_EXPONENT,
+                              transform_default_priors[_EXPONENT]))
+  else:
+    exponent = jnp.ones(media_data.shape[1]) * exponent
+  
   carryover = media_transforms.carryover(
       data=media_data,
-      ad_effect_retention_rate=transform_samples[_AD_EFFECT_RETENTION_RATE],
-      peak_effect_delay=transform_samples[_PEAK_EFFECT_DELAY],
+      ad_effect_retention_rate=ad_effect_retention_rate,
+      peak_effect_delay=peak_effect_delay,
       number_lags=number_lags)
 
   if media_data.ndim == 3:
     exponent = jnp.expand_dims(exponent, axis=-1)
-  return media_transforms.apply_exponent_safe(
-    data=carryover,
-    exponent=transform_samples[_EXPONENT]
-  )
+  return media_transforms.apply_exponent_safe(data=carryover, exponent=exponent)
 
-
-TRANSFORM_PRIORS_NAMES = immutabledict.immutabledict({
-    "carryover":
-        frozenset((_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY, _EXPONENT)),
-    "adstock":
-        frozenset((_EXPONENT, _LAG_WEIGHT)),
-    "hill_adstock":
-        frozenset((_LAG_WEIGHT, _HALF_MAX_EFFECTIVE_CONCENTRATION, _SLOPE)),
-    "exponential_carryover":
-      frozenset((_SATURATION, _AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY)),
-    "exponential_adstock":
-        frozenset((_SATURATION, _LAG_WEIGHT))
-}) 
-
-_NAMES_TO_MODEL_TRANSFORMS = immutabledict.immutabledict({
-    "hill_adstock": transform_hill_adstock,
-    "adstock": transform_adstock,
-    "carryover": transform_carryover,
-    "exponential_carryover": transform_exponential_carryover,
-    "exponential_adstock": transform_exponential_adstock,
-})
-
-_MODEL_TRANSFORMS_TO_PRIOR_NAMES = immutabledict.immutabledict({
-  fn: TRANSFORM_PRIORS_NAMES[name]
-  for name, fn in _NAMES_TO_MODEL_TRANSFORMS.items()
-})
-
-
-def _get_transform_function_prior_names(
-    transform_function: TransformFunction
-  ) -> List[str]:
-  prior_list = set([
-    *list(chain.from_iterable(_ENSEMBLE_ADSTOCK_TRANSFORMS.keys())),
-    *list(chain.from_iterable(_ENSEMBLE_SATURATION_TRANSFORMS.keys()))
-  ])
-  prior_list = _MODEL_TRANSFORMS_TO_PRIOR_NAMES.get(
-    transform_function, prior_list
-  )
-
-  return prior_list
-
-
-def _get_transform_default_priors(
-    transform_hyperprior,
-    transform_function
-  ) -> Mapping[str, Prior]:
-
-  # # Prior distributions considered
-  # transform_prior_lists = _get_transform_default_priors_lists()
-
-  # Generate hyperprior distribution samples for all possible hyper-priors.
-  prior_distributions = _get_transform_prior_distributions()
-
-  def get_prior(prior_name):
-    """ We don't insist on prior_defaults sharing the same distribution as hyperpriors"""
-    if transform_hyperprior:
-      return _get_transform_prior_hyperprior_distribution(prior_name)
-    else:
-      return prior_distributions[prior_name]
-    # return cond(
-    #     transform_hyperprior,
-    #     lambda _: _get_transform_prior_hyperprior_distribution(prior_name),
-    #     # Use default prior
-    #     lambda _: prior_distributions[prior_name],
-    #     None
-    #   )
-  
-  prior_names = _get_transform_function_prior_names(transform_function)
-  return immutabledict.immutabledict({
-    prior_name: get_prior(prior_name)
-    for prior_name in prior_names
-  })
-
-def _get_transform_param_samples(
-    transform_function,
-    transform_hyperprior,
-    custom_priors,
-    n_media_channels: int
-  ) -> Mapping[str, jnp.ndarray]:
-  transform_default_priors = _get_transform_default_priors(
-    transform_hyperprior,
-    transform_function
-  )
-
-  def get_sample(site_name, dist):
-    with numpyro.plate(name=f"{site_name}_plate",
-                      size=n_media_channels):
-      return numpyro.sample(
-          name=site_name,
-          fn=custom_priors.get(site_name,               
-              dist#transform_default_priors[site_name]
-        )
-      )
-    
-  return {
-    prior_name: get_sample(prior_name, dist)
-    for prior_name, dist in transform_default_priors.items()
-  }
-
-def apply_media_transform_function(
-  transform_function: TransformFunction,
-  media_data: jnp.ndarray,
-  transform_hyperprior: bool,
-  custom_priors: MutableMapping[str, Prior],
-  **transform_kwargs
-) -> jnp.ndarray:
-  transform_param_samples = _get_transform_param_samples(
-    transform_function,
-    transform_hyperprior,
-    custom_priors,
-    media_data.shape[1]
-  )
-  return transform_function(
-    media_data,
-    transform_param_samples,
-    **transform_kwargs
-  )
-  
 
 def media_mix_model(
     media_data: jnp.ndarray,
@@ -580,27 +739,18 @@ def media_mix_model(
           fn=custom_priors.get(_WEEKDAY, default_priors[_WEEKDAY]))
     weekday = jnp.concatenate(arrays=[weekday, jnp.array([0])], axis=0)
     weekday_series = weekday[jnp.arange(data_size) % 7]
-
-
-  # In case of daily data, number of lags should be 13*7.
-  if transform_function in [transform_carryover, transform_exponential_carryover]:
-    default_number_lags = 13 if frequency == 52 else 60
-    transform_kwargs = {
-      'number_lags': default_number_lags,
-      **(transform_kwargs or {})
-    }
-  else:
-    transform_kwargs = transform_kwargs or {}
+    # In case of daily data, number of lags should be 13*7.
+    if transform_function == "carryover" and transform_kwargs and "number_lags" not in transform_kwargs:
+      transform_kwargs["number_lags"] = 13 * 7
+    elif transform_function == "carryover" and not transform_kwargs:
+      transform_kwargs = {"number_lags": 13 * 7}
 
   media_transformed = numpyro.deterministic(
       name="media_transformed",
-      value=apply_media_transform_function(
-                               transform_function,
-                               media_data,
-                               transform_hyperprior,
-                               custom_priors,
-                               **transform_kwargs
-  ))
+      value=transform_function(media_data,
+                               transform_hyperprior=transform_hyperprior,
+                               custom_priors=custom_priors,
+                               **transform_kwargs if transform_kwargs else {}))
   seasonality = media_transforms.calculate_seasonality(
       number_periods=data_size,
       degrees=degrees_seasonality,
@@ -688,44 +838,3 @@ def media_mix_model(
 
   numpyro.sample(
       name="target", fn=dist.Normal(loc=mu, scale=sigma), obs=target_data)
-
-
-# # DEFUNCT
-# def _get_transform_default_priors_lists():
-#   """ First in list is default. """
-#   return immutabledict.immutabledict({
-#     _SATURATION: [
-#       numpyro.distributions.HalfNormal(2.0),
-#       numpyro.distributions.HalfNormal(2.5),
-#       numpyro.distributions.HalfNormal(1.5)
-#     ],
-#     _LAG_WEIGHT: [
-#       numpyro.distributions.Beta(concentration1=1., concentration0=3.),
-#       numpyro.distributions.Beta(concentration1=1., concentration0=1.),
-#       numpyro.distributions.Beta(concentration1=4., concentration0=6.),
-#     ],
-#     _HALF_MAX_EFFECTIVE_CONCENTRATION: [
-#       dist.Gamma(concentration=1., rate=1.), # Original by MMM
-#       numpyro.distributions.LogNormal(loc=0.1, scale=0.5),
-#       numpyro.distributions.LogNormal(loc=0.5, scale=0.5),
-#     ],
-#     _AD_EFFECT_RETENTION_RATE: [
-#       numpyro.distributions.Beta(concentration1=1., concentration0=1.),
-#       numpyro.distributions.Beta(concentration1=1., concentration0=3.),
-#       numpyro.distributions.Beta(concentration1=4., concentration0=6.),
-#     ],
-#     _PEAK_EFFECT_DELAY: [
-#       numpyro.distributions.HalfNormal(scale=2.),
-#       numpyro.distributions.HalfNormal(scale=1.),
-#     ],
-#     _EXPONENT: [
-#       numpyro.distributions.Beta(concentration1=9., concentration0=1.),
-#       numpyro.distributions.Beta(concentration1=5., concentration0=1.),
-#       numpyro.distributions.Beta(concentration1=1., concentration0=1.),
-#     ],
-#     _SLOPE: [
-#       numpyro.distributions.Gamma(concentration=1., rate=1.),
-#       numpyro.distributions.Gamma(concentration=3., rate=1.),
-#       numpyro.distributions.HalfNormal(scale=2.0),
-#     ]
-#   })

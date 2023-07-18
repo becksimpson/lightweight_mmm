@@ -56,7 +56,7 @@ from lightweight_mmm import models_ensemble
 from lightweight_mmm import preprocessing
 from lightweight_mmm import utils
 from lightweight_mmm import media_transforms
-
+from lightweight_mmm.models import _NAMES_TO_MODEL_TRANSFORMS
 Prior = Union[
     dist.Distribution,
     Dict[str, float],
@@ -64,13 +64,8 @@ Prior = Union[
     float
 ]
 
-_NAMES_TO_MODEL_TRANSFORMS = immutabledict.immutabledict({
-    "hill_adstock": models.transform_hill_adstock,
-    "adstock": models.transform_adstock,
-    "carryover": models.transform_carryover,
-    "exponential_carryover": models.transform_exponential_carryover,
-    "exponential_adstock": models.transform_exponential_adstock,
-})
+
+
 _MODEL_FUNCTION = models.media_mix_model
 
 
@@ -236,6 +231,11 @@ class LightweightMMM:
     """
     default_priors = {
         **models._get_default_priors(),
+        **{
+          name: dist
+          for name, dist in models._get_transform_prior_distributions().items()
+          if name in models.TRANSFORM_PRIORS_NAMES[self.model_name]
+        }
         #**models._get_transform_default_priors(self.transform_hyperprior)[self.model_name]
     }
     # Checking that the key is contained in custom_priors has already been done
@@ -845,7 +845,7 @@ class LightweightMMMEnsemble:
     """
     default_priors = {
         **models._get_default_priors(),
-        #**models._get_transform_default_priors(self.transform_hyperprior)[self.model_name]
+        **models._get_transform_prior_distributions()
     }
     # Checking that the key is contained in custom_priors has already been done
     # at this point in the fit function.
