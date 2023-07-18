@@ -169,8 +169,10 @@ class LightweightMMM:
 
   def __post_init__(self):
     if self.model_name not in _NAMES_TO_MODEL_TRANSFORMS:
-      raise ValueError("Model name passed not valid. Please use any of the"
-                       "following: 'hill_adstock', 'adstock', 'carryover'.")
+      valid_models = ', '.join(list(_NAMES_TO_MODEL_TRANSFORMS.keys()))
+      raise ValueError(
+        "Model name passed not valid. Please use any of the"
+                       f"following: {valid_models}.")
     self._model_function = _MODEL_FUNCTION
     self._model_transform_function = _NAMES_TO_MODEL_TRANSFORMS[self.model_name]
     self._prior_names = models.MODEL_PRIORS_NAMES.union(
@@ -425,6 +427,7 @@ class LightweightMMM:
     self._seasonality_frequency = seasonality_frequency
     self._weekday_seasonality = weekday_seasonality
     self._month_seasonality = doms is not None
+    self._transform_kwargs = transform_kwargs
     self.media = media
     self.doms = doms
     self._extra_features = extra_features# jax-devicearray
@@ -440,7 +443,7 @@ class LightweightMMM:
   @functools.partial(
       jax.jit,
       static_argnums=(0,),
-      static_argnames=("degrees_seasonality", "weekday_seasonality",
+      static_argnames=("degrees_seasonality", "weekday_seasonality", "frequency",
                        "transform_function", "transform_hyperprior", "model"))
   def _predict(
       self,
@@ -451,6 +454,7 @@ class LightweightMMM:
       media_prior: jnp.ndarray,
       degrees_seasonality: int,
       frequency: int,
+      transform_kwargs,
       transform_function: Callable[[Any], jnp.ndarray],
       transform_hyperprior: bool,
       #transform_prior_function,
@@ -493,6 +497,7 @@ class LightweightMMM:
             frequency=frequency,
             transform_function=transform_function,
             transform_hyperprior=transform_hyperprior,
+            transform_kwargs=transform_kwargs,
             #transform_prior_function=transform_prior_function,
             custom_priors=custom_priors,
             weekday_seasonality=weekday_seasonality)
@@ -585,6 +590,7 @@ class LightweightMMM:
         weekday_seasonality=self._weekday_seasonality,
         transform_function=self._model_transform_function,
         transform_hyperprior=self.transform_hyperprior,
+        transform_kwargs=self._transform_kwargs,
         #transform_prior_function=self._transform_prior_function,
         model=self._model_function,
         custom_priors=self.custom_priors,

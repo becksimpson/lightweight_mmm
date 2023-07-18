@@ -202,11 +202,27 @@ _ENSEMBLE_SATURATION_TRANSFORMS = immutabledict.immutabledict({
   (_HALF_MAX_EFFECTIVE_CONCENTRATION, _SLOPE): media_transforms.hill,
 })
 
+_ENSEMBLE_TRANSFORMS_PRIOR_NAMES = set([
+  *list(chain.from_iterable(_ENSEMBLE_ADSTOCK_TRANSFORMS.keys())),
+  *list(chain.from_iterable(_ENSEMBLE_SATURATION_TRANSFORMS.keys()))
+])
+
+
+def _get_transform_kwargs(fn):
+  from inspect import signature
+  lst = []
+  sig = signature(fn)
+  for param in sig.parameters.values():
+      if (param.kind == param.KEYWORD_ONLY):
+        lst.append(param)
+  return lst
+
 
 def transform_exponential_adstock(
                     media_data: jnp.ndarray,
                     transform_samples: jnp.ndarray,
-                    adstock_normalise: bool = True
+                    adstock_normalise: bool = True,
+                    **kwargs
 ) -> jnp.ndarray:
   """Transforms the input data with exponetial saturation function and carryover
 
@@ -223,7 +239,7 @@ def transform_exponential_adstock(
   slopes = transform_samples[_SATURATION]
 
   adstock = media_transforms.adstock(
-      data=media_data, lag_weight=lag_weight, normalise=adstock_normalise)
+      data=media_data, lag_weight=lag_weight, adstock_normalise=adstock_normalise)
 
   return media_transforms.exponential_saturation(
     data=adstock, slope=slopes
@@ -232,7 +248,8 @@ def transform_exponential_adstock(
 def transform_exponential_carryover(
                     media_data: jnp.ndarray,
                     transform_samples,
-                    number_lags: int = 60
+                    number_lags: int = 60,
+                    **kwargs
 ) -> jnp.ndarray:
   """Transforms the input data with exponetial saturation function and carryover
 
@@ -257,7 +274,7 @@ def transform_exponential_carryover(
       data=media_data,
       ad_effect_retention_rate=ad_effect_retention_rate,
       peak_effect_delay=peak_effect_delay,
-      number_lags=60) # Max lags allowed is 2months
+      number_lags=number_lags) # Max lags allowed is 2months
 
   # with numpyro.plate(name=f"{_SATURATION}_plate", size=media_data.shape[1]):
   #   slopes = numpyro.sample(
@@ -271,7 +288,8 @@ def transform_exponential_carryover(
 
 def transform_adstock(media_data: jnp.ndarray,
                       transform_samples,
-                      adstock_normalise: bool = True) -> jnp.ndarray:
+                      adstock_normalise: bool = True,
+                      **kwargs) -> jnp.ndarray:
   """Transforms the input data with the adstock function and exponent.
 
   Args:
@@ -293,7 +311,7 @@ def transform_adstock(media_data: jnp.ndarray,
     exponent = jnp.expand_dims(exponent, axis=-1)
 
   adstock = media_transforms.adstock(
-      data=media_data, lag_weight=lag_weight, normalise=adstock_normalise)
+      data=media_data, lag_weight=lag_weight, adstock_normalise=adstock_normalise)
 
   n = media_transforms.apply_exponent_safe(data=adstock, exponent=exponent)
 
@@ -302,8 +320,9 @@ def transform_adstock(media_data: jnp.ndarray,
 
 def transform_hill_adstock(media_data: jnp.ndarray,
                            transform_samples,
-                           saturation_normalise: bool = True,
-                           adstock_normalise: bool = True) -> jnp.ndarray:
+                           hill_normalise: bool = True,
+                           adstock_normalise: bool = True,
+                           **kwargs) -> jnp.ndarray:
   """Transforms the input data with the adstock and hill functions.
 
   Args:
@@ -327,15 +346,16 @@ def transform_hill_adstock(media_data: jnp.ndarray,
 
   return media_transforms.hill(
       data=media_transforms.adstock(
-          data=media_data, lag_weight=lag_weight, normalise=adstock_normalise),
+          data=media_data, lag_weight=lag_weight, adstock_normalise=adstock_normalise),
       half_max_effective_concentration=half_max_effective_concentration,
       slope=slope,
-      normalise=saturation_normalise
+      hill_normalise=hill_normalise
     )
 
 def transform_carryover(media_data: jnp.ndarray,
                         transform_samples,
                         number_lags: int = 60,
+                        **kwargs
                         ) -> jnp.ndarray:
   """Transforms the input data with the carryover function and exponent.
 
@@ -362,6 +382,45 @@ def transform_carryover(media_data: jnp.ndarray,
   )
 
 
+def transform_ensemble(media_data: jnp.ndarray,
+                        transform_samples,
+                        **kwargs
+                        ) -> jnp.ndarray:
+  """Transforms the input data with the carryover function and exponent.
+
+  Args:
+    media_data: Media data to be transformed. It is expected to have 2 dims for
+      national models and 3 for geo models.
+    transform_samples:
+  Returns:
+    The transformed media data.
+  """
+  transformed_media = jnp.concatenate([
+    jnp.expand_dims(sat_f(
+      ad_f(
+        media_data,
+        *[transform_samples[p] for p in ad_params],
+        **{k:v for k,v in kwargs.items() if k in _get_transform_kwargs(ad_f)}
+      ),
+      *[transform_samples[p] for p in sat_params],
+      **{k:v for k,v in kwargs.items() if k in _get_transform_kwargs(sat_f)}
+    ), 0)
+    for sat_params, sat_f in _ENSEMBLE_SATURATION_TRANSFORMS.items()
+    for ad_params, ad_f in _ENSEMBLE_ADSTOCK_TRANSFORMS.items()
+  ], axis=0)
+
+  with numpyro.plate(
+      name=f"model_weights_plate",
+      size=transformed_media.shape[0]):
+    model_weights = numpyro.sample(
+      name='model_weights',
+      fn=dist.Beta(concentration1=1.0, concentration0=1.0)
+    )
+  model_weights = model_weights / model_weights.sum()
+
+  return (transformed_media * model_weights.reshape(-1, 1, 1)).sum(axis=0)
+
+
 TRANSFORM_PRIORS_NAMES = immutabledict.immutabledict({
     "carryover":
         frozenset((_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY, _EXPONENT)),
@@ -372,7 +431,8 @@ TRANSFORM_PRIORS_NAMES = immutabledict.immutabledict({
     "exponential_carryover":
       frozenset((_SATURATION, _AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY)),
     "exponential_adstock":
-        frozenset((_SATURATION, _LAG_WEIGHT))
+        frozenset((_SATURATION, _LAG_WEIGHT)),
+    "ensemble": frozenset(tuple(_ENSEMBLE_TRANSFORMS_PRIOR_NAMES))
 }) 
 
 _NAMES_TO_MODEL_TRANSFORMS = immutabledict.immutabledict({
@@ -381,6 +441,7 @@ _NAMES_TO_MODEL_TRANSFORMS = immutabledict.immutabledict({
     "carryover": transform_carryover,
     "exponential_carryover": transform_exponential_carryover,
     "exponential_adstock": transform_exponential_adstock,
+    "ensemble": transform_ensemble
 })
 
 _MODEL_TRANSFORMS_TO_PRIOR_NAMES = immutabledict.immutabledict({
@@ -392,12 +453,9 @@ _MODEL_TRANSFORMS_TO_PRIOR_NAMES = immutabledict.immutabledict({
 def _get_transform_function_prior_names(
     transform_function: TransformFunction
   ) -> List[str]:
-  prior_list = set([
-    *list(chain.from_iterable(_ENSEMBLE_ADSTOCK_TRANSFORMS.keys())),
-    *list(chain.from_iterable(_ENSEMBLE_SATURATION_TRANSFORMS.keys()))
-  ])
+ 
   prior_list = _MODEL_TRANSFORMS_TO_PRIOR_NAMES.get(
-    transform_function, prior_list
+    transform_function, _ENSEMBLE_TRANSFORMS_PRIOR_NAMES
   )
 
   return prior_list
@@ -420,13 +478,6 @@ def _get_transform_default_priors(
       return _get_transform_prior_hyperprior_distribution(prior_name)
     else:
       return prior_distributions[prior_name]
-    # return cond(
-    #     transform_hyperprior,
-    #     lambda _: _get_transform_prior_hyperprior_distribution(prior_name),
-    #     # Use default prior
-    #     lambda _: prior_distributions[prior_name],
-    #     None
-    #   )
   
   prior_names = _get_transform_function_prior_names(transform_function)
   return immutabledict.immutabledict({
@@ -583,7 +634,7 @@ def media_mix_model(
 
 
   # In case of daily data, number of lags should be 13*7.
-  if transform_function in [transform_carryover, transform_exponential_carryover]:
+  if transform_function in [transform_carryover, transform_exponential_carryover, transform_ensemble]:
     default_number_lags = 13 if frequency == 52 else 60
     transform_kwargs = {
       'number_lags': default_number_lags,

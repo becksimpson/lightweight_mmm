@@ -135,7 +135,7 @@ def calculate_seasonality(
 @jax.jit
 def adstock(data: jnp.ndarray,
             lag_weight: float = .9,
-            normalise: bool = True) -> jnp.ndarray:
+            adstock_normalise: bool = True) -> jnp.ndarray:
   """Calculates the adstock value of a given array.
 
   To learn more about advertising lag:
@@ -164,7 +164,7 @@ def adstock(data: jnp.ndarray,
   norms =  (1. / (1 - lag_weight.reshape(1, -1))) / (1. / (1 - lag_weight.reshape(1, -1) ** (1 + jnp.arange(0, data.shape[0])).reshape(-1, 1)))
 
   return jax.lax.cond(
-      normalise,
+      adstock_normalise,
       lambda adstock_values: adstock_values / norms,
       #lambda adstock_values: adstock_values / (1. / (1 - lag_weight)),
       lambda adstock_values: adstock_values,
@@ -186,7 +186,7 @@ def exponential_saturation(data: jnp.ndarray, slope: jnp.ndarray) -> jnp.ndarray
 @jax.jit
 def hill(data: jnp.ndarray, half_max_effective_concentration: jnp.ndarray,
          slope: jnp.ndarray,
-         normalise: bool = False
+         hill_normalise: bool = False
   ) -> jnp.ndarray:
   """Calculates the hill function for a given array of values.
 
@@ -207,7 +207,7 @@ def hill(data: jnp.ndarray, half_max_effective_concentration: jnp.ndarray,
 
   # Normalisation keeps linear scaling at half_max_effective_concentration point
   return jax.lax.cond(
-    normalise,
+    hill_normalise,
     lambda hill_media: hill_media * (2 * half_max_effective_concentration),
     lambda hill_media: hill_media,
     operand=hill_media
