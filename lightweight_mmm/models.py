@@ -122,7 +122,7 @@ def _get_default_priors() -> Mapping[str, Prior]:
   # Since JAX cannot be called before absl.app.run in tests we get default
   # priors from a function.
   return immutabledict.immutabledict({
-      _INTERCEPT: dist.HalfNormal(scale=2.),
+      _INTERCEPT: dist.HalfNormal(scale=0.5),
       _COEF_TREND: dist.Normal(loc=0., scale=1.),
       _EXPO_TREND: dist.Uniform(low=0.5, high=1.5),
       _SIGMA: dist.Gamma(concentration=1., rate=1.),
@@ -140,13 +140,21 @@ def _get_default_priors() -> Mapping[str, Prior]:
   #   _DEGREE_SEASONALITY: dist.Binomial(total_count=5, probs=0.4)
   # })
 
-def _get_transform_hyperprior_distributions() -> Mapping[str, Prior]:
+def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union[float, Prior]]]:
   return immutabledict.immutabledict({
     # For Beta Distribution
     _EXPONENT: immutabledict.immutabledict({
         #'concentration1': dist.Uniform(1., 9.),
         #'concentration0': dist.Uniform(1., 9.),
-        'concentration': dist.Uniform(0., 8.),
+        'concentration': dist.TruncatedNormal(0., 3., low=0.0, high=8.0)
+        #'concentration': dist.Uniform(0., 8.),
+        #'concentration': dist.HalfNormal(3., constraint=dist.constraints.less_than(8.0))
+        # TODO CONSTRAINED HALFNORMAL DISTRIBUTION
+        # 'concentration': dist.TruncatedDistribution(
+        #   dist.HalfNormal(3.),
+        #   high=8.0
+        # )
+        
     }),
     # Adstock lag_weight (Beta), [0.0, 1.0], higher, more carryover
     _LAG_WEIGHT: immutabledict.immutabledict({
@@ -160,15 +168,18 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Prior]:
         # Median 1.6, <1 27%, longtail
         'scale': dist.LogNormal(0.5, 0.8)
     }),
-    # hill saturation (gamma)
+    # hill saturation (gamma) create range 0.1 -> 2/3ish, 0.1 -> 1.0 peak
     _SLOPE: immutabledict.immutabledict({
-        'concentration': dist.Uniform(1., 4.),
-        'rate': dist.Uniform(0.1, 1.)
+        'concentration': dist.Uniform(1.5, 3.),
+        #'rate': dist.Uniform(low=2.0, high=2.0)
+        'rate': 2.0 # Fixed to contrain hyperparameter distribution to appropriate range
     }),
     # Half point most effective, gamma
+    # Create range 0.5 -> 2 (Half --> double mean contribution)
     _HALF_MAX_EFFECTIVE_CONCENTRATION: immutabledict.immutabledict({
-      'concentration': dist.Uniform(1., 5.),
-      'rate': dist.Uniform(0.5, 5.0)
+      'concentration': dist.Uniform(2., 5.),
+      'rate': 2.0
+      #'rate': dist.Uniform(low=2.0, high=2.0)
     }),
     # Retention rate of advertisement Beta
     _AD_EFFECT_RETENTION_RATE: immutabledict.immutabledict({
@@ -180,9 +191,24 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Prior]:
     _SATURATION: immutabledict.immutabledict({
         #'concentration': dist.Uniform(1., 4.),
         #'rate': dist.Uniform(0.1, 1.)
-        # 1.34 mean
+        # 1.34 mean --> HalfNormal(1.34)
         'scale': dist.LogNormal(loc=0.3, scale=0.3)
     }),
+  })
+
+def _get_transform_prior_distributions() -> Mapping[str, Prior]:
+  return immutabledict.immutabledict({
+    # Strongest assumption lag effect
+    # concentration1 is alpha
+    _LAG_WEIGHT: dist.Beta(concentration1= 2., concentration0= 1.),
+    _AD_EFFECT_RETENTION_RATE: dist.Beta(concentration1=1., concentration0= 1.),
+    _PEAK_EFFECT_DELAY:dist.HalfNormal(scale= 2.),
+
+    # Saturation effects
+    _EXPONENT: dist.Beta(concentration1=9., concentration0=1.),
+    _SATURATION: dist.HalfNormal(scale= 2.),
+    _HALF_MAX_EFFECTIVE_CONCENTRATION: dist.Gamma(concentration= 1., rate= 1.),
+    _SLOPE: dist.Gamma(concentration= 1., rate= 1.)
   })
 
 
@@ -192,19 +218,20 @@ def _get_transform_default_priors(transform_hyperprior) -> Mapping[str, Prior]:
   # transform_prior_lists = _get_transform_default_priors_lists()
 
   # Generate hyperprior distribution samples for all possible hyper-priors.
+  prior_distributions = _get_transform_prior_distributions()
   hyperprior_distributions = _get_transform_hyperprior_distributions()
   hyperprior_samples = {
     prior_name: {
       hyperprior_name: numpyro.sample(
         name=prior_name + '_' + hyperprior_name,
         fn=distr
-      )
+      ) if not isinstance(distr, float) else distr
       for hyperprior_name, distr in distrs.items()
     }
     for prior_name, distrs in hyperprior_distributions.items()
   }
 
-  def get_prior(prior_name, prior_default):
+  def get_prior(prior_name):
     """ We don't insist on prior_defaults sharing the same distribution as hyperpriors"""
     fn = _HYPERPRIOR_PRIOR_TRANSFORM_DISTRIBUTIONS[prior_name]
     return cond(
@@ -218,7 +245,7 @@ def _get_transform_default_priors(transform_hyperprior) -> Mapping[str, Prior]:
           )
         ),
         # Use default prior
-        lambda _: prior_default,
+        lambda _: prior_distributions[prior_name],
         None
       )
   
@@ -234,9 +261,23 @@ def _get_transform_default_priors(transform_hyperprior) -> Mapping[str, Prior]:
   #       })
   # })
 
+  # return immutabledict.immutabledict({
+  #   prior_name: get_prior(prior_name)
+  #   for prior_name in list(_get_transform_prior_distributions().keys())
+  # })
+
+  return immutabledict.immutabledict({
+    k: {
+      v: get_prior(v)
+      for v in TRANSFORM_PRIORS_NAMES[k]
+    }
+    for k in TRANSFORM_PRIORS_NAMES.keys()
+  })
+
   return immutabledict.immutabledict({
       "carryover": immutabledict.immutabledict
           ({
+
             _AD_EFFECT_RETENTION_RATE: get_prior(
               _AD_EFFECT_RETENTION_RATE,
               dist.Beta(concentration1=1., concentration0=1.)

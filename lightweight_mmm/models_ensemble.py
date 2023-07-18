@@ -21,6 +21,7 @@ three different models.
   - Hill-Adstock
   - Carryover
 """
+from itertools import chain
 import sys
 #  pylint: disable=g-import-not-at-top
 if sys.version_info >= (3, 8):
@@ -735,6 +736,12 @@ def ensemble_media_transform(
   # )
   transform_default_priors = _get_transform_default_priors(transform_hyperprior)
 
+
+  sample_list = set([
+    *list(chain.from_iterable(_ADSTOCK_TRANSFORMS.keys())),
+    *list(chain.from_iterable(_SATURATION_TRANSFORMS.keys()))
+  ])
+
   def get_sample(site_name, dist):
     with numpyro.plate(name=f"{site_name}_plate",
                       size=media_data.shape[1]):
@@ -748,6 +755,7 @@ def ensemble_media_transform(
   transform_samples = {
     site_name: get_sample(site_name, dist)
     for site_name, dist in transform_default_priors.items()
+    if site_name in sample_list
   }
 
   args = dict(
