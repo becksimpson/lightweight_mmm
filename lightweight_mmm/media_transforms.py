@@ -94,7 +94,7 @@ def calculate_seasonality_ensemble(
   # .sum(axis=1)
 
 
-@functools.partial(jax.jit, static_argnums=[0, 1])
+@functools.partial(jax.jit, static_argnums=[0, 1, 3])
 def calculate_seasonality(
     number_periods: int,
     degrees: int,
@@ -132,10 +132,11 @@ def calculate_seasonality(
   return (season_matrix * gamma_seasonality).sum(axis=2).sum(axis=1)
 
 
+#@functools.partial(jax.jit, static_argnames=("adstock_normalise",))
 @jax.jit
 def adstock(data: jnp.ndarray,
-            lag_weight: float = .9,
-            adstock_normalise: bool = True) -> jnp.ndarray:
+            lag_weight: float,
+            adstock_normalise: bool = True, **_) -> jnp.ndarray:
   """Calculates the adstock value of a given array.
 
   To learn more about advertising lag:
@@ -171,22 +172,26 @@ def adstock(data: jnp.ndarray,
       operand=adstock_values)
 
 @jax.jit
-def exponential_saturation(data: jnp.ndarray, slope: jnp.ndarray) -> jnp.ndarray:
+def exponential_saturation(data: jnp.ndarray, saturation: jnp.ndarray, **_) -> jnp.ndarray:
   """Calculates the exponential saturation function for a given array of values.
 
   Simpler (less parameters) than the hill function.
 
   Args:
     data: Input data.
-    slope: Controls the saturation, higher slope, stronger saturation
+    saturation: Controls the saturation, higher slope, stronger saturation
   """
-  d = 1.0 - jnp.exp(-slope * data)
-  return d /  ((1 - jnp.exp(-slope )) / (1 + jnp.exp(-slope)))#/ d.sum(axis=0) * data.sum(axis=0)
+  d = 1.0 - jnp.exp(-saturation * data)
+  return d /  ((1 - jnp.exp(-saturation )) / (1 + jnp.exp(-saturation)))#/ d.sum(axis=0) * data.sum(axis=0)
 
-@jax.jit
-def hill(data: jnp.ndarray, half_max_effective_concentration: jnp.ndarray,
+
+#@jax.jit
+@functools.partial(jax.jit, static_argnames=("hill_normalise",))
+def hill(data: jnp.ndarray,
+         half_max_effective_concentration: jnp.ndarray,
          slope: jnp.ndarray,
-         hill_normalise: bool = False
+         hill_normalise: bool = False,
+         **_
   ) -> jnp.ndarray:
   """Calculates the hill function for a given array of values.
 
@@ -201,11 +206,18 @@ def hill(data: jnp.ndarray, half_max_effective_concentration: jnp.ndarray,
   Returns:
     The hill values for the respective input data.
   """
+  #hill_normalise = True
   save_transform = apply_exponent_safe(
       data=data / half_max_effective_concentration, exponent=-slope)
   hill_media = jnp.where(save_transform == 0, x=0, y=1. / (1 + save_transform))
 
+  #return hill_media #* (2 * half_max_effective_concentration)
   # Normalisation keeps linear scaling at half_max_effective_concentration point
+  # if hill_normalise:
+  #   return hill_media * (2 * half_max_effective_concentration)
+  # else:
+  #   return hill_media
+  #return hill_media
   return jax.lax.cond(
     hill_normalise,
     lambda hill_media: hill_media * (2 * half_max_effective_concentration),
@@ -213,11 +225,12 @@ def hill(data: jnp.ndarray, half_max_effective_concentration: jnp.ndarray,
     operand=hill_media
   )
 
-
-@functools.partial(jax.vmap, in_axes=(1, 1, None), out_axes=1)
+#@functools.partial(jax.jit, static_argnums=(2,))
+@functools.partial(jax.vmap, in_axes=(1, 1, None), out_axes=1)#, None , None , None
 def _carryover_convolve(data: jnp.ndarray,
                         weights: jnp.ndarray,
-                        number_lags: int) -> jnp.ndarray:
+                        number_lags: int, 
+                        ) -> jnp.ndarray:
   """Applies the convolution between the data and the weights for the carryover.
 
   Args:
@@ -228,15 +241,17 @@ def _carryover_convolve(data: jnp.ndarray,
   Returns:
     The result values from convolving the data and the weights with padding.
   """
+  #number_lags = 60
   window = jnp.concatenate([jnp.zeros(number_lags - 1), weights])
   return jax.scipy.signal.convolve(data, window, mode="same") / weights.sum()
 
-
+# Staticed out as used in jnp.arange (fails with dynamic)
 @functools.partial(jax.jit, static_argnames=("number_lags",))
 def carryover(data: jnp.ndarray,
               ad_effect_retention_rate: jnp.ndarray,
               peak_effect_delay: jnp.ndarray,
-              number_lags: int = 13) -> jnp.ndarray:
+              number_lags: int = 60,
+              **_) -> jnp.ndarray:
   """Calculates media carryover.
 
   More details about this function can be found in:
@@ -255,9 +270,14 @@ def carryover(data: jnp.ndarray,
   Returns:
     The carryover values for the given data with the given parameters.
   """
+  #number_lags = 60
+
+
   lags_arange = jnp.expand_dims(jnp.arange(number_lags, dtype=jnp.float32),
                                 axis=-1)
   convolve_func = _carryover_convolve
+  #zeros = jnp.zeros((number_lags - 1, data.shape[1]))
+
   if data.ndim == 3:
     # Since _carryover_convolve is already vmaped in the decorator we only need
     # to vmap it once here to handle the geo level data. We keep the windows bi
@@ -265,13 +285,28 @@ def carryover(data: jnp.ndarray,
     # dimension.
     convolve_func = jax.vmap(
         fun=_carryover_convolve, in_axes=(2, None, None), out_axes=2)
+    #zeros = jnp.zeros((number_lags - 1, data.shape[1], data.shape[2]))
+
+
   weights = ad_effect_retention_rate**((lags_arange - peak_effect_delay)**2)
+  # window = jnp.concatenate([zeros, weights])
+
+  # return jnp.concatenate([
+  #   jnp.expand_dims(jax.scipy.signal.convolve(data[:, i], weights[:, i], mode="same") / weights.sum(), axis=1)
+  #   for i in range(data.shape[1])
+  # ], axis=1)
+
+  # return convolve_func(data, weights, number_lags)
+  #convolved_media = convolve_func(data, window)
+  #convolved_media = convolve_func(data, weights, number_lags)
+  #return convolved_media #jax.block_until_ready(convolve_func(data, weights, number_lags))
   return convolve_func(data, weights, number_lags)
 
 @jax.jit
 def apply_exponent_safe(
     data: jnp.ndarray,
     exponent: jnp.ndarray,
+    **_
     ) -> jnp.ndarray:
   """Applies an exponent to given data in a gradient safe way.
 
@@ -287,3 +322,32 @@ def apply_exponent_safe(
   """
   exponent_safe = jnp.where(condition=(data == 0), x=1, y=data) ** exponent
   return jnp.where(condition=(data == 0), x=0, y=exponent_safe)
+
+
+# @jax.jit
+# def hill(data: jnp.ndarray,
+#          half_max_effective_concentration: jnp.ndarray,
+#          slope: jnp.ndarray,
+#          **_
+#   ) -> jnp.ndarray:
+#   """Calculates the hill function for a given array of values.
+
+#   Refer to the following link for detailed information on this equation:
+#     https://en.wikipedia.org/wiki/Hill_equation_(biochemistry)
+
+#   Args:
+#     data: Input data.
+#     half_max_effective_concentration: ec50 value for the hill function.
+#     slope: Slope of the hill function.
+
+#   Returns:
+#     The hill values for the respective input data.
+#   """
+#   #exponent_safe = jnp.where(condition=(data == 0), x=1, y=(data / half_max_effective_concentration)) ** (-slope)
+#   #save_transform = jnp.where(condition=(data == 0), x=0, y=exponent_safe)
+
+#   save_transform = apply_exponent_safe(
+#       data=data / half_max_effective_concentration, exponent=-slope)
+#   hill_media = jnp.where(condition=(data == 0), x=0, y=1. / (1 + save_transform))
+
+#   return hill_media
