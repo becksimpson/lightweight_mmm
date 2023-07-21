@@ -33,7 +33,7 @@ import seaborn as sns
 from sklearn import metrics
 
 from lightweight_mmm import lightweight_mmm
-from lightweight_mmm import models, models_ensemble
+from lightweight_mmm import models
 from lightweight_mmm import preprocessing
 from lightweight_mmm import utils
 
@@ -160,22 +160,26 @@ def _calculate_media_contribution(
     NotFittedModelError: if the model is not fitted before computation
   """
   if not hasattr(media_mix_model, "trace"):
-    raise lightweight_mmm.NotFittedModelError(
-        "Model needs to be fit first before attempting to plot its fit.")
+      raise lightweight_mmm.NotFittedModelError(
+          "Model needs to be fit first before attempting to plot its fit.")
 
-  if media_mix_model.trace["media_transformed"].ndim > 3:
-    # s for samples, t for time, c for media channels, g for geo
-    einsum_str = "stcg, scg->stcg"
-  elif media_mix_model.trace["media_transformed"].ndim == 3:
-    # s for samples, t for time, c for media channels
-    einsum_str = "stc, sc->stc"
+  if 'channel_contribution' in media_mix_model.trace:
+      media_contribution = media_mix_model.trace['channel_contribution']
+  else:
+      if media_mix_model.trace["media_transformed"].ndim > 3:
+          # s for samples, t for time, c for media channels, g for geo
+          einsum_str = "stcg, scg->stcg"
+      elif media_mix_model.trace["media_transformed"].ndim == 3:
+          # s for samples, t for time, c for media channels
+          einsum_str = "stc, sc->stc"
 
-  media_contribution = jnp.einsum(einsum_str,
-                                  media_mix_model.trace["media_transformed"],
-                                  media_mix_model.trace["coef_media"])
-  if media_mix_model.trace["media_transformed"].ndim > 3:
-    # Aggregate media channel contribution across geos.
-    media_contribution = media_contribution.sum(axis=-1)
+      media_contribution = jnp.einsum(einsum_str,
+                                      media_mix_model.trace["media_transformed"],
+                                      media_mix_model.trace["coef_media"])
+      
+  if media_contribution.ndim > 3:
+      # Aggregate media channel contribution across geos.
+      media_contribution = media_contribution.sum(axis=-1)
   return media_contribution
 
 
@@ -319,7 +323,7 @@ def create_media_baseline_contribution_df(
   # Calculate the baseline contribution.
   # Scaled prediction - sum of scaled contribution across channels.
   scaled_prediction = media_mix_model.trace["mu"]
-  if media_mix_model.trace["media_transformed"].ndim > 3:
+  if scaled_prediction.ndim > 2:
     # Sum up the scaled prediction across all the geos.
     scaled_prediction = scaled_prediction.sum(axis=-1)
   baseline_contribution = scaled_prediction - sum_scaled_media_contribution_across_channels
@@ -371,7 +375,7 @@ def create_media_baseline_contribution_df(
     posterior_pred = target_scaler.inverse_transform(posterior_pred)
 
   # Take the sum of posterior predictions across geos.
-  if media_mix_model.trace["media_transformed"].ndim > 3:
+  if posterior_pred.ndim > 2:
     posterior_pred = posterior_pred.sum(axis=-1)
 
   # Take the average of the inverse transformed prediction across samples.
@@ -543,7 +547,7 @@ def create_segmented_contribution_df(
     posterior_pred = target_scaler.inverse_transform(posterior_pred)
 
   # Take the sum of posterior predictions across geos.
-  if media_mix_model.trace["media_transformed"].ndim > 3:
+  if posterior_pred.ndim > 2:
     posterior_pred = posterior_pred.sum(axis=-1)
 
   # Take the average of the inverse transformed prediction across samples.
@@ -1574,13 +1578,13 @@ def plot_prior_and_posterior(
     if not media_mix_model.transform_hyperprior:
       default_priors = {
         **default_priors,
-        **models_ensemble._get_transform_prior_distributions()
+        **models._get_transform_prior_distributions()
       }
 
   #TODO: Plots for hyperpriors
   transform_hyperpriors = {
     f'{prior}_{hyperprior}': dist
-    for prior, d in models_ensemble._get_transform_hyperprior_distributions().items()
+    for prior, d in models._get_transform_hyperprior_distributions().items()
     for hyperprior, dist in d.items()
   }
 

@@ -136,7 +136,7 @@ def calculate_seasonality(
 @jax.jit
 def adstock(data: jnp.ndarray,
             lag_weight: float,
-            adstock_normalise: bool = True, **_) -> jnp.ndarray:
+            adstock_normalise: bool = True) -> jnp.ndarray:
   """Calculates the adstock value of a given array.
 
   To learn more about advertising lag:
@@ -171,9 +171,13 @@ def adstock(data: jnp.ndarray,
       lambda adstock_values: adstock_values,
       operand=adstock_values)
 
-@jax.jit
-def exponential_saturation(data: jnp.ndarray, saturation: jnp.ndarray, **_) -> jnp.ndarray:
-  """Calculates the exponential saturation function for a given array of values.
+@functools.partial(jax.jit, static_argnames=('logistic_normalise', ))
+def logistic_saturation(
+  data: jnp.ndarray,
+  saturation: jnp.ndarray,
+  logistic_normalise: bool = True,
+) -> jnp.ndarray:
+  """Calculates the logistic saturation function for a given array of values.
 
   Simpler (less parameters) than the hill function.
 
@@ -181,9 +185,16 @@ def exponential_saturation(data: jnp.ndarray, saturation: jnp.ndarray, **_) -> j
     data: Input data.
     saturation: Controls the saturation, higher slope, stronger saturation
   """
-  d = 1.0 - jnp.exp(-saturation * data)
-  return d /  ((1 - jnp.exp(-saturation )) / (1 + jnp.exp(-saturation)))#/ d.sum(axis=0) * data.sum(axis=0)
-
+  log_data = (1.0 - jnp.exp(-saturation * data)) / (1.0 + jnp.exp(-saturation * data))
+  one_norm = (1.0 - jnp.exp(-saturation)) / (1.0 + jnp.exp(-saturation))
+  
+  return jax.lax.cond(
+    logistic_normalise,
+    lambda log_data: log_data / one_norm,
+    lambda log_data: log_data,
+    operand=log_data
+  )
+  #return d /  ((1 - jnp.exp(-saturation )) / (1 + jnp.exp(-saturation)))#/ d.sum(axis=0) * data.sum(axis=0)
 
 #@jax.jit
 @functools.partial(jax.jit, static_argnames=("hill_normalise",))
@@ -191,7 +202,6 @@ def hill(data: jnp.ndarray,
          half_max_effective_concentration: jnp.ndarray,
          slope: jnp.ndarray,
          hill_normalise: bool = False,
-         **_
   ) -> jnp.ndarray:
   """Calculates the hill function for a given array of values.
 
@@ -251,7 +261,7 @@ def carryover(data: jnp.ndarray,
               ad_effect_retention_rate: jnp.ndarray,
               peak_effect_delay: jnp.ndarray,
               number_lags: int = 60,
-              **_) -> jnp.ndarray:
+              ) -> jnp.ndarray:
   """Calculates media carryover.
 
   More details about this function can be found in:
@@ -306,7 +316,6 @@ def carryover(data: jnp.ndarray,
 def apply_exponent_safe(
     data: jnp.ndarray,
     exponent: jnp.ndarray,
-    **_
     ) -> jnp.ndarray:
   """Applies an exponent to given data in a gradient safe way.
 
