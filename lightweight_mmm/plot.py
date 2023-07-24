@@ -1453,6 +1453,14 @@ def _collect_features_for_prior_posterior_plot(
         "Model needs to be fit first in order to plot the posterior.")
 
   features = media_mix_model._prior_names
+  if media_mix_model.transform_hyperprior:
+    for prior, hyps in models._get_transform_hyperprior_distributions().items():
+      if prior in media_mix_model._prior_names:
+        features = features.union([
+          f'{prior}_{h}' for h, di in hyps.items()
+          if isinstance(di, numpyro.distributions.Distribution)
+        ])
+
   if not media_mix_model._weekday_seasonality:
     features = features.difference([models._WEEKDAY])
 
@@ -1464,9 +1472,18 @@ def _collect_features_for_prior_posterior_plot(
 
   if media_mix_model.media.ndim == 2:
     features = features.difference(models.GEO_ONLY_PRIORS)
-    features = features.union(["coef_media"])
+  # Non-ensemble model
+  if 'coef_media' in media_mix_model.trace:
+    if media_mix_model.media.ndim == 2:
+      features = features.union(["coef_media"])
+    else:
+      features = features.union(["coef_media", "channel_coef_media"])
+  # Ensemble model
   else:
-    features = features.union(["coef_media", "channel_coef_media"])
+    if media_mix_model.media.ndim == 2:
+      features = features.union(['coef_media_models'])
+    else:
+      features = features.union(['coef_media_models', 'channel_coef_media_models'])
 
   if selected_features:
     extraneous_features = set(selected_features).difference(features)
@@ -1474,6 +1491,16 @@ def _collect_features_for_prior_posterior_plot(
       raise ValueError(
           f"Selected_features {extraneous_features} not in media_mix_model.")
     features = selected_features
+
+  if media_mix_model.transform_hyperprior:
+    hyperprior_features = [
+      f'{prior}_{hyperprior}'
+      for prior, d in models._get_transform_hyperprior_distributions().items()
+      for hyperprior, dist in d.items()
+      #if prior in media_mix_model.
+    ]
+  else:
+    hyperprior_features = []
 
   geo_level_features = [
       models._COEF_SEASONALITY,
@@ -1492,6 +1519,7 @@ def _collect_features_for_prior_posterior_plot(
       models._SATURATION,
       "channel_coef_media",
       "coef_media",
+      #*hyperprior_features
   ]
   seasonal_features = [
     models._GAMMA_SEASONALITY
@@ -1543,10 +1571,15 @@ def plot_prior_and_posterior(
     NotFittedModelError: media_mix_model has not yet been fit.
     ValueError: A feature has been created without a well-defined prior.
   """
+  # Prior default distributions exist where model is single known, fixed type 
+  if not hasattr(media_mix_model, 'model_name'):
+    print('Plot Posterior Predictives has not been implemented for ensemble.')
+    return
+
   media_names = media_mix_model.media_names
   (features, geo_level_features, channel_level_features, seasonal_features,
-   other_features) = _collect_features_for_prior_posterior_plot(
-       media_mix_model, selected_features)
+    other_features) = _collect_features_for_prior_posterior_plot(
+        media_mix_model, selected_features)
 
   number_of_subplots = int(
       sum([
@@ -1562,31 +1595,26 @@ def plot_prior_and_posterior(
 
   default_priors = {
       **models._get_default_priors(),
-      #**models._get_transform_default_priors(media_mix_model.transform_hyperprior)[media_mix_model.model_name]
   }
+  media_transform_priors = {
+    name: dist
+    for name, dist in models._get_transform_prior_distributions().items()
+    if name in models.TRANSFORM_PRIORS_NAMES[media_mix_model.model_name]
+  }
+  media_transform_hyperpriors = {}
 
+  default_priors = {
+    **default_priors,
+  }
   # No hyperpriors - known priors
-  # Prior default distributions exist where model is known, fixed type 
-  if hasattr(media_mix_model, 'model_name'):
-    # if not media_mix_model.transform_hyperprior:
-    #   default_priors = {
-    #     **default_priors,
-    #     **models._get_transform_default_priors(False)[media_mix_model.model_name]
-    #   }
-    print('Not implemented!!')
-  else:
-    if not media_mix_model.transform_hyperprior:
-      default_priors = {
-        **default_priors,
-        **models._get_transform_prior_distributions()
-      }
-
-  #TODO: Plots for hyperpriors
-  transform_hyperpriors = {
-    f'{prior}_{hyperprior}': dist
-    for prior, d in models._get_transform_hyperprior_distributions().items()
-    for hyperprior, dist in d.items()
-  }
+  if media_mix_model.transform_hyperprior:
+    #Plots for hyperpriors
+    media_transform_hyperpriors = {
+      f'{prior}_{hyperprior}': dist
+      for prior, d in models._get_transform_hyperprior_distributions().items()
+      for hyperprior, dist in d.items()
+      if prior in media_transform_priors.keys()
+    }
 
   kwargs_for_helper_function = {
       "fig": fig,
@@ -1602,21 +1630,90 @@ def plot_prior_and_posterior(
     if feature not in features:
       continue
 
-    if feature in media_mix_model.custom_priors:
+    # Hyperpriors don't have custom priors
+    if feature in media_transform_hyperpriors.keys():
+      prior_distribution = media_transform_hyperpriors[feature]
+    # Custom Priors take precedence
+    elif feature in media_mix_model.custom_priors:
       prior_distribution = media_mix_model.custom_priors[feature]
-      if not isinstance(prior_distribution, numpyro.distributions.Distribution):
+      # Dict level custom priors, construct array for each media_channel
+      if isinstance(prior_distribution, dict):
+        if feature not in media_transform_priors.keys():
+          raise ValueError('Dict mapping custom features only supported for media_transform_priors')
+        # Prior takes precedence if no transform_hyperprior
+        if not media_mix_model.transform_hyperprior:
+          prior_distributions = [media_transform_priors[feature] for _ in range(len(media_names))]
+        # Hyperpriors - sample mean of learned distribution
+        else:
+          feature_hyperpriors = models._get_transform_hyperprior_distributions()[feature]
+          prior_cls = models._get_transform_prior_distributions()[feature].__class__
+
+          if prior_cls != numpyro.distributions.Beta:
+            mean_hyperprior_posterior_samples = {
+              hyp: (
+                val if not isinstance(val, numpyro.distributions.Distribution)
+                else media_mix_model.trace[feature+'_'+hyp].mean()
+              )
+              for hyp, val in feature_hyperpriors.items()
+            }
+          else:
+            mean_hyperprior_posterior_samples = {
+              'concentration1': 9 - media_mix_model.trace[feature+'_concentration'].mean(),
+              'concentration0': 1 + media_mix_model.trace[feature+'_concentration'].mean(),
+            }
+          # mean_hyperprior_posterior_samples = {
+          #   hyp: media_mix_model.trace[feature+'_'+hyp].mean()
+          #   for hyp in feature_hyperpriors
+          # }
+          print(f'Mean Hyperpriors for {feature} is {mean_hyperprior_posterior_samples}')
+          prior_distributions = [
+            prior_cls(
+              **mean_hyperprior_posterior_samples
+            )
+            for _ in range(len(media_names))
+          ]
+          #prior_distributions = [None for _ in range(len(media_names))]
+        for idx, prior in prior_distribution.items():
+          prior_distributions[idx] = prior
+      elif not isinstance(prior_distribution, numpyro.distributions.Distribution):
         raise ValueError(f"{feature} cannot be plotted.")
+      prior_distribution = prior_distributions
     elif feature in default_priors.keys():
       prior_distribution = default_priors[feature]
-    elif feature in transform_hyperpriors.keys():
-      prior_distribution = transform_hyperpriors[feature]
+    elif feature in media_transform_priors.keys():
+      # Prior takes precedence if no transform_hyperprior
+      if not media_mix_model.transform_hyperprior:
+        prior_distribution = media_transform_priors[feature]
+      # Hyperpriors - sample mean of learned distribution
+      else:
+        feature_hyperpriors = models._get_transform_hyperprior_distributions()[feature]
+        prior_cls = models._get_transform_prior_distributions()[feature].__class__
+
+        if prior_cls != numpyro.distributions.Beta:
+          mean_hyperprior_posterior_samples = {
+            hyp: (
+              val if not isinstance(val, numpyro.distributions.Distribution)
+              else media_mix_model.trace[feature+'_'+hyp].mean()
+            )
+            for hyp, val in feature_hyperpriors.items()
+          }
+        else:
+          mean_hyperprior_posterior_samples = {
+            'concentration1': 9 - media_mix_model.trace[feature+'_concentration'].mean(),
+            'concentration0': 1 + media_mix_model.trace[feature+'_concentration'].mean(),
+          }
+
+        print(f'Mean Hyperpriors for {feature} is {mean_hyperprior_posterior_samples}')
+        prior_distribution = prior_cls(
+          **mean_hyperprior_posterior_samples
+        )
     elif feature in ("channel_coef_media", "coef_media"):
       # We have to fill this in later since the prior varies by channel.
       prior_distribution = None
     else:
       # This should never happen.
       #raise ValueError(f"{feature} has no prior specified.")
-      print(f'{feature} not found to have prior distr')
+      print(f'{feature} not found to have fixed prior distribution')
       continue
     kwargs_for_helper_function["prior_distribution"] = prior_distribution
 
@@ -1631,25 +1728,30 @@ def plot_prior_and_posterior(
             posterior_samples = np.array(
                 media_mix_model.trace[feature][:, i_feature, j_geo])
           (fig, gridspec_fig,
-           i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
-               posterior_samples=posterior_samples,
-               subplot_title=subplot_title,
-               i_ax=i_ax,
-               **kwargs_for_helper_function)
+            i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+                posterior_samples=posterior_samples,
+                subplot_title=subplot_title,
+                i_ax=i_ax,
+                **kwargs_for_helper_function)
 
     if feature in geo_level_features:
       for i_geo in range(media_mix_model.n_geos):
         subplot_title = f"{feature}, geo {i_geo}"
         posterior_samples = np.array(media_mix_model.trace[feature][:, i_geo])
         (fig, gridspec_fig,
-         i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
-             posterior_samples=posterior_samples,
-             subplot_title=subplot_title,
-             i_ax=i_ax,
-             **kwargs_for_helper_function)
+          i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+              posterior_samples=posterior_samples,
+              subplot_title=subplot_title,
+              i_ax=i_ax,
+              **kwargs_for_helper_function)
 
     if feature in channel_level_features:
       for i_channel in range(media_mix_model.n_media_channels):
+        # Early exit for fixed custom priors, for hyperpriors
+        if feature in media_transform_hyperpriors.keys() and media_mix_model.custom_priors.get(feature.rsplit('_', 1)[0], {}).get(i_channel, None) is not None:
+          print(f'Feature {feature} has a custom_prior, so hyperprior not plotted')
+          continue
+
         subplot_title = f"{feature}, {media_names[i_channel]}"
         if feature in ("channel_coef_media", "coef_media"):
           # NOTE: I changed this
@@ -1660,17 +1762,26 @@ def plot_prior_and_posterior(
           # )
           prior_distribution = numpyro.distributions.continuous.HalfNormal(
               scale=jnp.squeeze(media_mix_model._media_prior[i_channel]))
+        
         posterior_samples = np.array(
             jnp.squeeze(media_mix_model.trace[feature][:, i_channel]))
-        kwargs_for_helper_function["prior_distribution"] = prior_distribution
+        
+        if isinstance(prior_distribution, numpyro.distributions.Distribution):
+          kwargs_for_helper_function["prior_distribution"] = prior_distribution
+        elif isinstance(prior_distribution, list):
+          kwargs_for_helper_function["prior_distribution"] = prior_distribution[i_channel]
+        else:
+          raise ValueError(
+            f'Channel level feature {feature}, has invalid prior_distribution type {type(prior_distribution)}'
+          )
         hyperprior = feature == "channel_coef_media"
         (fig, gridspec_fig,
-         i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
-             posterior_samples=posterior_samples,
-             subplot_title=subplot_title,
-             i_ax=i_ax,
-             hyperprior=hyperprior,
-             **kwargs_for_helper_function)
+          i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+              posterior_samples=posterior_samples,
+              subplot_title=subplot_title,
+              i_ax=i_ax,
+              hyperprior=hyperprior,
+              **kwargs_for_helper_function)
         if feature == 'coef_media':
           fig.axes[i_ax - 1].set_xlim(0, 0.4)
         # if feature == 'ad_effect_retention_rate':
@@ -1681,11 +1792,11 @@ def plot_prior_and_posterior(
         subplot_title = f"{feature}, day {i_day}"
         posterior_samples = np.array(media_mix_model.trace[feature][:, i_day])
         (fig, gridspec_fig,
-         i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
-             posterior_samples=posterior_samples,
-             subplot_title=subplot_title,
-             i_ax=i_ax,
-             **kwargs_for_helper_function)
+          i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+              posterior_samples=posterior_samples,
+              subplot_title=subplot_title,
+              i_ax=i_ax,
+              **kwargs_for_helper_function)
 
     if feature == models._GAMMA_SEASONALITY:
       for i_season in range(media_mix_model._degrees_seasonality):
@@ -1696,11 +1807,11 @@ def plot_prior_and_posterior(
                                                                       i_season,
                                                                       j_season])
           (fig, gridspec_fig,
-           i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
-               posterior_samples=posterior_samples,
-               subplot_title=subplot_title,
-               i_ax=i_ax,
-               **kwargs_for_helper_function)
+            i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+                posterior_samples=posterior_samples,
+                subplot_title=subplot_title,
+                i_ax=i_ax,
+                **kwargs_for_helper_function)
           
     if feature == models._PARAM_DAY_OF_MONTH:
       for i_param in range(2):
@@ -1720,9 +1831,9 @@ def plot_prior_and_posterior(
       subplot_title = f"{feature}"
       posterior_samples = np.array(media_mix_model.trace[feature])
       (fig, gridspec_fig,
-       i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
-           posterior_samples=posterior_samples,
-           subplot_title=subplot_title,
-           i_ax=i_ax,
-           **kwargs_for_helper_function)
+        i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+            posterior_samples=posterior_samples,
+            subplot_title=subplot_title,
+            i_ax=i_ax,
+            **kwargs_for_helper_function)
   return fig

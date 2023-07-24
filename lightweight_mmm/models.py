@@ -39,6 +39,7 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.stats import beta as jbeta
 import numpyro
+import numpy as np
 from numpyro import distributions as dist
 from numpyro.contrib.control_flow import cond
 
@@ -73,6 +74,8 @@ _COEF_EXTRA_FEATURES = "coef_extra_features"
 _COEF_SEASONALITY = "coef_seasonality"
 _PARAM_DAY_OF_MONTH = 'param_dayofmonth'
 _MULTIPLIER_DAY_OF_MONTH = 'multiplier_dayofmonth'
+_MEDIA_TRANSFORM_WEIGHTS = 'media_transform_weights'
+_MODEL_WEIGHTS = 'model_weights'
 
 MODEL_PRIORS_NAMES = frozenset((
     _INTERCEPT,
@@ -112,18 +115,22 @@ def _get_default_priors() -> Mapping[str, Prior]:
       _COEF_SEASONALITY: dist.HalfNormal(scale=.5),
       _PARAM_DAY_OF_MONTH: dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),
       _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(0.5),
+      _MODEL_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
+      _MEDIA_TRANSFORM_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
   })
 
 
 def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union[float, Prior]]]:
   return immutabledict.immutabledict({
-    # For Beta Distribution
+    # For Beta Distribution - high focus on minimal saturation
     _EXPONENT: immutabledict.immutabledict({
         'concentration': dist.TruncatedNormal(0., 3., low=0.0, high=8.0)
+        #'concentration': dist.TruncatedCauchy(0., 2., low=0.0, high=8.0)
     }),
     # Adstock lag_weight (Beta), [0.0, 1.0], higher, more carryover
     _LAG_WEIGHT: immutabledict.immutabledict({
-        'concentration': dist.Uniform(0., 8.),
+        #'concentration': dist.Uniform(0., 8.),
+        'concentration': dist.TruncatedNormal(4.0, 2.0, low=0.0, high=8.0)
     }),
     # Carryover delay to peak (halfnormal)
     _PEAK_EFFECT_DELAY: immutabledict.immutabledict({
@@ -132,20 +139,25 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     }),
     # hill saturation (gamma) create range 0.1 -> 2/3ish, 0.1 -> 1.0 peak
     _SLOPE: immutabledict.immutabledict({
-        'concentration': dist.Uniform(1.5, 3.),
-        'rate': 2.0 # Fixed to contrain hyperparameter distribution to appropriate range
+        #'concentration': dist.Uniform(1.5, 3.),
+        #'rate': 2.0 # Fixed to contrain hyperparameter distribution to appropriate range
+        'concentration': dist.Uniform(low=6.0, high=8.0),
+        'rate': 1.0 / 0.2
     }),
     # Half point most effective, gamma
     # Create range 0.5 -> 2 (Half --> double mean contribution)
     _HALF_MAX_EFFECTIVE_CONCENTRATION: immutabledict.immutabledict({
-      'concentration': dist.Uniform(2., 5.),
-      'rate': 2.0
+      #'concentration': dist.Uniform(2., 5.),
+      #'rate': 2.0
+      'concentration': dist.Uniform(low=4., high=6.0),
+      'rate': 1 / 0.15
     }),
     # Retention rate of advertisement Beta
     _AD_EFFECT_RETENTION_RATE: immutabledict.immutabledict({
-        'concentration': dist.Uniform(0., 8.),
+        #'concentration': dist.Uniform(0., 8.),
+        'concentration': dist.TruncatedNormal(4.0, 2.0, low=0.0, high=8.0)
     }),
-    # Saturation for exponential saturation
+    # Saturation for logistic saturation
     _SATURATION: immutabledict.immutabledict({
         # 1.34 mean --> HalfNormal(1.34)
         'scale': dist.LogNormal(loc=0.3, scale=0.3)
@@ -162,6 +174,7 @@ def _get_transform_prior_distributions() -> Mapping[str, Prior]:
 
     # Saturation effects
     _EXPONENT: dist.Beta(concentration1=9., concentration0=1.),
+    # Weak prior no saturataion
     _SATURATION: dist.HalfNormal(scale= 2.),
     _HALF_MAX_EFFECTIVE_CONCENTRATION: dist.Gamma(concentration= 1., rate= 1.),
     _SLOPE: dist.Gamma(concentration= 1., rate= 1.)
@@ -753,19 +766,45 @@ def _get_transform_param_samples(
     custom_priors,
     n_media_channels: int
   ) -> Mapping[str, jnp.ndarray]:
+  # Default priors that are sampled from 
   transform_default_priors = _get_transform_default_priors(
     transform_hyperprior,
     transform_function
   )
 
-  def get_sample(site_name, dist):
+  def get_sample(site_name: str, dist: numpyro.distributions.Distribution):
+    # Assume matching distributions
+    if site_name in custom_priors:
+      cls = dist.__class__
+      params = {}
+      
+      for p in cls.reparametrized_params:
+        vals = jnp.ones(n_media_channels) * getattr(dist, p)
+        for ch_idx, prior in custom_priors[site_name].items():
+          
+          vals = vals.at[ch_idx].set(getattr(prior, p))
+        params[p] = jnp.array(vals)
+          
+      # params = {
+      #   p: jnp.ones(n_media_channels) * dist[p]
+      #   for p in _get_transform_hyperprior_distributions()[site_name].keys()
+      # }
+      dist = cls(**params)
+
+
     with numpyro.plate(name=f"{site_name}_plate",
-                      size=n_media_channels):
+                      size=n_media_channels,
+                      #subsample_size=1
+                    ):# as ind:
+
+        # if isinstance(custom_priors[site_name], numpyro.distributions.Distribution):
+        #   dist = custom_priors[site_name]
+        # else:
+        #   dist = custom_priors[site_name].get(int(ind[0]), dist)
       return numpyro.sample(
           name=site_name,
-          fn=custom_priors.get(site_name,               
-              dist#transform_default_priors[site_name]
-        )
+          fn=dist
+          #fn=custom_priors.get(site_name, dist)
       )
     
   return {
@@ -1092,7 +1131,7 @@ def calculate_media_effects(
     with numpyro.plate(name='model_weight_plate', size=n_models):
       weights = numpyro.sample(
         'model_weights',
-        fn=dist.Beta(1, 1)
+        fn=dist.Beta(1.0, 1.0)
       )
 
     #weights = weights / weights.sum()

@@ -175,7 +175,7 @@ def adstock(data: jnp.ndarray,
 def logistic_saturation(
   data: jnp.ndarray,
   saturation: jnp.ndarray,
-  logistic_normalise: bool = True,
+  logistic_normalise: bool = False,
 ) -> jnp.ndarray:
   """Calculates the logistic saturation function for a given array of values.
 
@@ -253,7 +253,8 @@ def _carryover_convolve(data: jnp.ndarray,
   """
   #number_lags = 60
   window = jnp.concatenate([jnp.zeros(number_lags - 1), weights])
-  return jax.scipy.signal.convolve(data, window, mode="same") / weights.sum()
+  #return jax.scipy.signal.convolve(data, window, mode="same") / weights.sum()
+  return jnp.convolve(data, window, mode='same') / weights.sum()
 
 # Staticed out as used in jnp.arange (fails with dynamic)
 @functools.partial(jax.jit, static_argnames=("number_lags",))
@@ -285,8 +286,7 @@ def carryover(data: jnp.ndarray,
 
   lags_arange = jnp.expand_dims(jnp.arange(number_lags, dtype=jnp.float32),
                                 axis=-1)
-  convolve_func = _carryover_convolve
-  #zeros = jnp.zeros((number_lags - 1, data.shape[1]))
+  weights = ad_effect_retention_rate**((lags_arange - peak_effect_delay)**2)
 
   if data.ndim == 3:
     # Since _carryover_convolve is already vmaped in the decorator we only need
@@ -295,11 +295,11 @@ def carryover(data: jnp.ndarray,
     # dimension.
     convolve_func = jax.vmap(
         fun=_carryover_convolve, in_axes=(2, None, None), out_axes=2)
-    #zeros = jnp.zeros((number_lags - 1, data.shape[1], data.shape[2]))
-
-
-  weights = ad_effect_retention_rate**((lags_arange - peak_effect_delay)**2)
-  # window = jnp.concatenate([zeros, weights])
+    return convolve_func(data, weights, number_lags)
+  
+  zeros = jnp.zeros((number_lags - 1, data.shape[1]))
+  window = jnp.concatenate([zeros, weights])
+  return jax.scipy.signal.convolve(data, window, mode="same") / weights.sum(axis=0)
 
   # return jnp.concatenate([
   #   jnp.expand_dims(jax.scipy.signal.convolve(data[:, i], weights[:, i], mode="same") / weights.sum(), axis=1)

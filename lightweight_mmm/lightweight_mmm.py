@@ -238,8 +238,8 @@ class LightweightMMM:
           for name, dist in models._get_transform_prior_distributions().items()
           if name in models.TRANSFORM_PRIORS_NAMES[self.model_name]
         }
-        #**models._get_transform_default_priors(self.transform_hyperprior)[self.model_name]
     }
+
     # Checking that the key is contained in custom_priors has already been done
     # at this point in the fit function.
     for prior_name in custom_priors:
@@ -251,8 +251,23 @@ class LightweightMMM:
         custom_priors[prior_name] = default_priors[prior_name].__class__(
             *custom_priors[prior_name])
       elif isinstance(custom_priors[prior_name], dict):
-        custom_priors[prior_name] = default_priors[prior_name].__class__(
-            **custom_priors[prior_name])
+        # Providing Custom Prior to specific media channels
+        if all([k in self.media_names for k in custom_priors[prior_name].keys()]):
+          # Currently only support distributions provided at channel level, map to index Level
+          # Currently only support matching distributions to expected prior distributions
+          assert all([
+            isinstance(d, dist.Distribution) and d.__class__ == default_priors[prior_name].__class__
+            for d in custom_priors[prior_name].values()
+          ])
+          # Media Channel Index mapping to prior parameters
+          custom_priors[prior_name] = {
+            idx: custom_priors[prior_name][channel]
+            for idx, channel in enumerate(self.media_names)
+            if channel in custom_priors[prior_name]
+          }
+        else:
+          custom_priors[prior_name] = default_priors[prior_name].__class__(
+              **custom_priors[prior_name])
       elif not isinstance(custom_priors[prior_name], dist.Distribution):
         raise ValueError(
             "Priors given must be a Numpyro distribution or one of the "
@@ -333,6 +348,12 @@ class LightweightMMM:
     if media.min() < 0:
       raise ValueError("Media values must be greater or equal to zero.")
 
+    if media_names is not None:
+      self.media_names = media_names
+    else:
+      self.media_names = [f"channel_{i}" for i in range(media.shape[1])]
+
+
     if custom_priors:
       not_used_custom_priors = set(custom_priors.keys()).difference(
           self._prior_names)
@@ -404,10 +425,6 @@ class LightweightMMM:
       )
 
     self.custom_priors = custom_priors
-    if media_names is not None:
-      self.media_names = media_names
-    else:
-      self.media_names = [f"channel_{i}" for i in range(media.shape[1])]
 
     if extra_features_names is not None:
       self.extra_features_names = extra_features_names
