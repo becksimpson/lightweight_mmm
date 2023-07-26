@@ -1012,37 +1012,59 @@ def plot_media_channel_posteriors(
     raise lightweight_mmm.NotFittedModelError(
         "Model needs to be fit first before attempting to plot its fit.")
 
-  n_media_channels = np.shape(media_mix_model.trace["coef_media"])[1]
+  if 'coef_media_models' in media_mix_model.trace:
+    coef_media_models = jnp.moveaxis(
+      media_mix_model.trace["coef_media_models"],
+      [0], [1]
+    )
+    model_names = [
+      fn_adstock.__name__ + '_' + fn_sat.__name__
+      for fn_adstock in models._ENSEMBLE_ADSTOCK_TRANSFORMS.values()
+      for fn_sat in models._ENSEMBLE_SATURATION_TRANSFORMS.values()
+    ]
+  else:
+    coef_media_models = jnp.expand_dims(media_mix_model.trace["coef_media"], 0)
+    model_names = [None]
+
+  n_media_channels = np.shape(coef_media_models[0])[1]
   n_geos = (
-      media_mix_model.media.shape[2] if media_mix_model.media.ndim == 3 else 1)
+      media_mix_model.media.shape[2]
+      if media_mix_model.media.ndim == 3
+      else 1
+  )
 
   if not fig_size:
     fig_size = (5 * n_geos, 3 * n_media_channels)
 
-  media_channel_posteriors = media_mix_model.trace["coef_media"]
   if channel_names is None:
-    channel_names = np.arange(np.shape(media_channel_posteriors)[1])
+    channel_names = np.arange(n_media_channels)
+
   fig, axes = plt.subplots(
       nrows=n_media_channels, ncols=n_geos, figsize=fig_size)
   for channel_i, channel_axis in enumerate(axes):
-    if isinstance(channel_axis, np.ndarray):
-      for geo_i, geo_axis in enumerate(channel_axis):
-        geo_axis = arviz.plot_kde(
-            media_channel_posteriors[:, channel_i, geo_i],
+    for idx, coef_media in enumerate(coef_media_models):
+      media_channel_posteriors = coef_media
+      if isinstance(channel_axis, np.ndarray):
+        for geo_i, geo_axis in enumerate(channel_axis):
+          _ = arviz.plot_kde(
+              media_channel_posteriors[:, channel_i, geo_i],
+              quantiles=quantiles,
+              ax=geo_axis
+            )
+          axis_label = f"media channel {channel_names[channel_i]} geo {geo_i}"
+          geo_axis.set_xlabel(axis_label)
+      else:
+        _ = arviz.plot_kde(
+            media_channel_posteriors[:, channel_i],
             quantiles=quantiles,
-            ax=geo_axis)
-        axis_label = f"media channel {channel_names[channel_i]} geo {geo_i}"
-        geo_axis.set_xlabel(axis_label)
-    else:
-      channel_axis = arviz.plot_kde(
-          media_channel_posteriors[:, channel_i],
-          quantiles=quantiles,
-          ax=channel_axis)
-      axis_label = f"media channel {channel_names[channel_i]}"
-      channel_axis.set_xlabel(axis_label)
-
+            ax=channel_axis,
+            #label=model_names[idx],
+        )
+        axis_label = f"media channel {channel_names[channel_i]}"
+    channel_axis.set_title(axis_label)
+    #channel_axis.legend(loc='upper left')
   fig.tight_layout()
-  plt.close()
+  plt.show()
   return fig
 
 
@@ -1303,6 +1325,7 @@ def _make_prior_and_posterior_subplot_for_one_feature(
     number_of_samples_for_prior: int = 5000,
     kde_bandwidth_adjust_for_posterior: float = 1,
     seed: Optional[int] = None,
+    posterior_names: List[str] = None,
 ) -> Tuple[matplotlib.figure.Figure, matplotlib.gridspec.GridSpec, int]:
   """Helper function to make the prior and posterior distribution subplots.
 
@@ -1389,16 +1412,39 @@ def _make_prior_and_posterior_subplot_for_one_feature(
   ax.axvline(np.median(prior_samples), linestyle='--', color='tab:blue', label='prior median')
   prior_xlims = ax.get_xlim()
 
-  sns.kdeplot(
-      data=posterior_samples.flatten(),
-      lw=4,
-      clip=clipping_bounds,
-      cut=0,
-      bw_adjust=kde_bandwidth_adjust_for_posterior,
-      color="tab:orange", ax=ax, label="posterior")
-  ax.axvline(np.median(posterior_samples.flatten()), linestyle='--', color='tab:orange', label='posterior median')
-  posterior_xlims = ax.get_xlim()
+  if posterior_samples.ndim == 1:
+    sns.kdeplot(
+        data=posterior_samples.flatten(),
+        lw=4,
+        clip=clipping_bounds,
+        cut=0,
+        bw_adjust=kde_bandwidth_adjust_for_posterior,
+        color="tab:orange", ax=ax, label="posterior")
+    ax.axvline(np.median(posterior_samples.flatten()), linestyle='--', color='tab:orange', label='posterior median')
+  else:
+    for i in range(posterior_samples.shape[1]):
+      #label = posterior_names[i] if posterior_names is not None else 'posterior'
+      #print(label)
+      sns.kdeplot(
+        data=posterior_samples[:, i].flatten(),
+        lw=4,
+        clip=clipping_bounds,
+        cut=0,
+        bw_adjust=kde_bandwidth_adjust_for_posterior,
+        color="tab:orange", ax=ax
+      )
+    ax.axvline(np.median(posterior_samples.flatten()), linestyle='--', color='tab:orange', label='posterior median')
+    sns.kdeplot(
+        data=np.squeeze(posterior_samples).flatten(),
+        lw=4,
+        clip=clipping_bounds,
+        cut=0,
+        bw_adjust=kde_bandwidth_adjust_for_posterior,
+        color="black", ax=ax,
+        label='avg posterior'
+    )
 
+  posterior_xlims = ax.get_xlim()
   ax.legend(loc="best")
   ax.set_xlim(
       min(prior_xlims[0], posterior_xlims[0]),
@@ -1519,6 +1565,7 @@ def _collect_features_for_prior_posterior_plot(
       models._SATURATION,
       "channel_coef_media",
       "coef_media",
+      'coef_media_models',
       #*hyperprior_features
   ]
   seasonal_features = [
@@ -1707,7 +1754,7 @@ def plot_prior_and_posterior(
         prior_distribution = prior_cls(
           **mean_hyperprior_posterior_samples
         )
-    elif feature in ("channel_coef_media", "coef_media"):
+    elif feature in ("channel_coef_media", "coef_media", 'coef_media_models'):
       # We have to fill this in later since the prior varies by channel.
       prior_distribution = None
     else:
@@ -1716,6 +1763,33 @@ def plot_prior_and_posterior(
       print(f'{feature} not found to have fixed prior distribution')
       continue
     kwargs_for_helper_function["prior_distribution"] = prior_distribution
+
+    if feature in [models._MEDIA_TRANSFORM_WEIGHTS, models._MODEL_WEIGHTS]:
+      ensemble_names = [
+        fn_adstock.__name__ + '_' + fn_sat.__name__
+        for fn_adstock in models._ENSEMBLE_ADSTOCK_TRANSFORMS.values()
+        for fn_sat in models._ENSEMBLE_SATURATION_TRANSFORMS.values()
+      ]
+      # Check between training & plotting use same ensemble def
+      if media_mix_model.trace[feature].shape[1] != len(ensemble_names):
+        ensemble_names = [f'model_{i}' for i in range(media_mix_model.trace[feature].shape[1])]
+
+      for i_feature in range(media_mix_model.trace[feature].shape[1]):
+        for j_geo in range(media_mix_model.n_geos):
+          subplot_title = f"{feature} feature {ensemble_names[i_feature]}"
+          if media_mix_model.n_geos == 1:
+            posterior_samples = np.array(
+                media_mix_model.trace[feature][:, i_feature])
+          else:
+            subplot_title += f', geo {j_geo}'
+            posterior_samples = np.array(
+                media_mix_model.trace[feature][:, i_feature, j_geo])
+          (fig, gridspec_fig,
+            i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+                posterior_samples=posterior_samples,
+                subplot_title=subplot_title,
+                i_ax=i_ax,
+                **kwargs_for_helper_function)
 
     if feature == models._COEF_EXTRA_FEATURES:
       for i_feature in range(media_mix_model.trace[feature].shape[1]):
@@ -1753,19 +1827,18 @@ def plot_prior_and_posterior(
           continue
 
         subplot_title = f"{feature}, {media_names[i_channel]}"
-        if feature in ("channel_coef_media", "coef_media"):
+        if feature in ("channel_coef_media", "coef_media", "coef_media_models"):
           # NOTE: I changed this
           # prior_distribution = numpyro.distributions.TruncatedNormal(
           #     loc=jnp.squeeze(media_mix_model._media_prior[i_channel]),
           #     scale=0.05,
           #     low=1e-6
           # )
-          prior_distribution = numpyro.distributions.continuous.HalfNormal(
-              scale=jnp.squeeze(media_mix_model._media_prior[i_channel]))
-        
-        posterior_samples = np.array(
-            jnp.squeeze(media_mix_model.trace[feature][:, i_channel]))
-        
+          prior_distribution = models._generate_media_prior_distribution(
+            jnp.squeeze(media_mix_model._media_prior[i_channel])
+          )
+          # prior_distribution = numpyro.distributions.continuous.HalfNormal(
+          #     scale=jnp.squeeze(media_mix_model._media_prior[i_channel]))
         if isinstance(prior_distribution, numpyro.distributions.Distribution):
           kwargs_for_helper_function["prior_distribution"] = prior_distribution
         elif isinstance(prior_distribution, list):
@@ -1774,6 +1847,17 @@ def plot_prior_and_posterior(
           raise ValueError(
             f'Channel level feature {feature}, has invalid prior_distribution type {type(prior_distribution)}'
           )
+        
+        if feature == 'coef_media_models':
+          posterior_samples = np.array(
+              media_mix_model.trace[feature][:, :, i_channel])
+          print(posterior_samples.shape)
+          posterior_names = [f'model_{i}' for i in range(posterior_samples.shape[0])]
+        else:
+          posterior_samples = np.array(
+              jnp.squeeze(media_mix_model.trace[feature][:, i_channel]))
+          posterior_names = None
+          
         hyperprior = feature == "channel_coef_media"
         (fig, gridspec_fig,
           i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
@@ -1781,9 +1865,11 @@ def plot_prior_and_posterior(
               subplot_title=subplot_title,
               i_ax=i_ax,
               hyperprior=hyperprior,
-              **kwargs_for_helper_function)
-        if feature == 'coef_media':
-          fig.axes[i_ax - 1].set_xlim(0, 0.4)
+              posterior_names=posterior_names,
+              **kwargs_for_helper_function
+            )
+        # if feature == 'coef_media':
+        #   fig.axes[i_ax - 1].set_xlim(0, 0.4)
         # if feature == 'ad_effect_retention_rate':
         #   fig.axes[i_ax - 1].set_xlim(0, 1.0)
 

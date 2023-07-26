@@ -255,13 +255,52 @@ def _carryover_convolve(data: jnp.ndarray,
   window = jnp.concatenate([jnp.zeros(number_lags - 1), weights])
   #return jax.scipy.signal.convolve(data, window, mode="same") / weights.sum()
   return jnp.convolve(data, window, mode='same') / weights.sum()
+  #return jnp.convolve(data, window, mode='same') / weights.sum()
 
-# Staticed out as used in jnp.arange (fails with dynamic)
+
+# @functools.partial(jax.jit, static_argnames=("number_lags",))
+# def carryover(data: jnp.ndarray,
+#               ad_effect_retention_rate: jnp.ndarray,
+#               peak_effect_delay: jnp.ndarray,
+#               number_lags: int = 30) -> jnp.ndarray:
+#   """Calculates media carryover.
+
+#   More details about this function can be found in:
+#   https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/46001.pdf
+
+#   Args:
+#     data: Input data. It is expected that data has either 2 dimensions for
+#       national models and 3 for geo models.
+#     ad_effect_retention_rate: Retention rate of the advertisement effect.
+#       Default is 0.5.
+#     peak_effect_delay: Delay of the peak effect in the carryover function.
+#       Default is 1.
+#     number_lags: Number of lags to include in the carryover calculation. Default
+#       is 13.
+
+#   Returns:
+#     The carryover values for the given data with the given parameters.
+#   """
+#   lags_arange = jnp.expand_dims(jnp.arange(number_lags, dtype=jnp.float32),
+#                                 axis=-1)
+#   convolve_func = _carryover_convolve
+#   if data.ndim == 3:
+#     # Since _carryover_convolve is already vmaped in the decorator we only need
+#     # to vmap it once here to handle the geo level data. We keep the windows bi
+#     # dimensional also for three dims data and vmap over only the extra data
+#     # dimension.
+#     convolve_func = jax.vmap(
+#         fun=_carryover_convolve, in_axes=(2, None, None), out_axes=2)
+#   weights = ad_effect_retention_rate**((lags_arange - peak_effect_delay)**2)
+#   return convolve_func(data, weights, number_lags)
+
+
+#Staticed out as used in jnp.arange (fails with dynamic)
 @functools.partial(jax.jit, static_argnames=("number_lags",))
 def carryover(data: jnp.ndarray,
               ad_effect_retention_rate: jnp.ndarray,
               peak_effect_delay: jnp.ndarray,
-              number_lags: int = 60,
+              number_lags: int = 30,
               ) -> jnp.ndarray:
   """Calculates media carryover.
 
@@ -282,25 +321,82 @@ def carryover(data: jnp.ndarray,
     The carryover values for the given data with the given parameters.
   """
   #number_lags = 60
-
-
   lags_arange = jnp.expand_dims(jnp.arange(number_lags, dtype=jnp.float32),
                                 axis=-1)
-  weights = ad_effect_retention_rate**((lags_arange - peak_effect_delay)**2)
+  weights = ad_effect_retention_rate**(jnp.abs(lags_arange - peak_effect_delay))
 
-  if data.ndim == 3:
-    # Since _carryover_convolve is already vmaped in the decorator we only need
-    # to vmap it once here to handle the geo level data. We keep the windows bi
-    # dimensional also for three dims data and vmap over only the extra data
-    # dimension.
-    convolve_func = jax.vmap(
-        fun=_carryover_convolve, in_axes=(2, None, None), out_axes=2)
-    return convolve_func(data, weights, number_lags)
-  
   zeros = jnp.zeros((number_lags - 1, data.shape[1]))
   window = jnp.concatenate([zeros, weights])
-  return jax.scipy.signal.convolve(data, window, mode="same") / weights.sum(axis=0)
+  #window = weights
 
+  # return jax.numpy.apply_along_axis(
+  #   lambda m: jnp.convolve(m[window.shape[0]:], m[:window.shape[0]], mode='same'),
+  #   axis=0,
+  #   arr=jnp.concatenate([window, data], axis=0)
+  # ) / weights.sum(axis=0).reshape(1, -1)
+
+  return jnp.concatenate([
+      jax.numpy.convolve(
+        data[:, i],
+        window[:, i],
+        mode='same',
+      ).reshape(-1, 1)
+    for i in range(data.shape[1])
+  ], axis=1) / weights.sum(axis=0).reshape(1, -1)
+
+  #return jnp.
+
+  # dn = jax.lax.conv_dimension_numbers(
+  #   data.shape, weights.shape,
+  #   ('NC', 'IW', 'NC')
+  # )
+
+  # return jax.lax.conv_general_dilated(
+  #   d,   # lhs = image tensor
+  #   weights, # rhs = conv kernel tensor
+  #   (1,),   # window strides
+  #   'SAME', # padding mode
+  #   (1,),   # lhs/image dilation
+  #   (1,),   # rhs/kernel dilation
+  #   dn
+  # )[0]         # dimension_numbers = lhs, rhs, out dimension permutation
+
+
+  return jax.lax.conv_general_dilated(
+    data,
+    weights,
+
+  )
+
+  return jax.scipy.ndimage.convolve(
+    data,
+    weights,
+    axis=0,
+    mode='same',
+    origin=1
+  )
+
+  # a = jax.scipy.ndimage.convolve1d()
+  # a = jax.scipy.signal.convolve(data, window, mode="same") / weights.sum(axis=0).reshape(1, -1)
+
+
+  # a = jnp.apply_along_axis(
+  #   lambda m: jnp.convolve(m, filt, mode='same'),
+  #   axis=0,
+  #   arr=a
+  # ) / weights.sum(axis=0).reshape(1, -1)
+
+  # b = _carryover_convolve(data, weights, number_lags)
+
+  # assert jnp.all(a==b)
+  return jax.scipy.signal.fftconvolve(
+    data,
+    window,
+    mode="same",
+    axes=[0]
+  ) / weights.sum(axis=0).reshape(1, -1)
+
+#   return a
   # return jnp.concatenate([
   #   jnp.expand_dims(jax.scipy.signal.convolve(data[:, i], weights[:, i], mode="same") / weights.sum(), axis=1)
   #   for i in range(data.shape[1])

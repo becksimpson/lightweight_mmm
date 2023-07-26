@@ -76,6 +76,7 @@ _PARAM_DAY_OF_MONTH = 'param_dayofmonth'
 _MULTIPLIER_DAY_OF_MONTH = 'multiplier_dayofmonth'
 _MEDIA_TRANSFORM_WEIGHTS = 'media_transform_weights'
 _MODEL_WEIGHTS = 'model_weights'
+_DEGREES_FREEDOM = 'degrees_freedom'
 
 MODEL_PRIORS_NAMES = frozenset((
     _INTERCEPT,
@@ -117,6 +118,7 @@ def _get_default_priors() -> Mapping[str, Prior]:
       _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(0.5),
       _MODEL_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
       _MEDIA_TRANSFORM_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
+      _DEGREES_FREEDOM: dist.Gamma(concentration=25., rate=0.5),
   })
 
 
@@ -160,9 +162,23 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     # Saturation for logistic saturation
     _SATURATION: immutabledict.immutabledict({
         # 1.34 mean --> HalfNormal(1.34)
-        'scale': dist.LogNormal(loc=0.3, scale=0.3)
+        #'scale': dist.LogNormal(loc=0.3, scale=0.3)
+        'concentration': dist.Uniform(low=1.5, high=4.0),
+        'rate': 1.0 / 0.5
     }),
   })
+
+def _generate_media_prior_distribution(mean: float, alpha:float=1.5, mode:str='beta'):
+  """ Generate beta distributions that mirror half normals except low 0 weighting. """
+  if mode == 'beta':
+    beta = alpha * (mean - 1) / mean * -1
+    return dist.Beta(concentration1=alpha, concentration0=beta)
+  elif mode == 'halfnormal':
+    return dist.HalfNormal(scale=mean)
+  else:
+    raise ValueError(
+      "We support only 'beta' 'halfnormal' media prior distributions"
+    )
 
 def _get_transform_prior_distributions() -> Mapping[str, Prior]:
   return immutabledict.immutabledict({
@@ -175,7 +191,7 @@ def _get_transform_prior_distributions() -> Mapping[str, Prior]:
     # Saturation effects
     _EXPONENT: dist.Beta(concentration1=9., concentration0=1.),
     # Weak prior no saturataion
-    _SATURATION: dist.HalfNormal(scale= 2.),
+    _SATURATION: dist.Gamma(concentration=3.0, rate=2.0),#dist.HalfNormal(scale= 2.),
     _HALF_MAX_EFFECTIVE_CONCENTRATION: dist.Gamma(concentration= 1., rate= 1.),
     _SLOPE: dist.Gamma(concentration= 1., rate= 1.)
   })
@@ -212,7 +228,7 @@ _ENSEMBLE_ADSTOCK_TRANSFORMS = immutabledict.immutabledict({
   (_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY): media_transforms.carryover
 })
 _ENSEMBLE_SATURATION_TRANSFORMS = immutabledict.immutabledict({
-  (_EXPONENT,): media_transforms.apply_exponent_safe,
+  #(_EXPONENT,): media_transforms.apply_exponent_safe,
   (_SATURATION,): media_transforms.logistic_saturation,
   (_HALF_MAX_EFFECTIVE_CONCENTRATION, _SLOPE): media_transforms.hill,
 })
@@ -386,7 +402,7 @@ def transform_hill_adstock(media_data: jnp.ndarray,
 
 def transform_carryover(media_data: jnp.ndarray,
                         transform_samples,
-                        number_lags: int = 60,
+                        number_lags: int = 30,
                         **kwargs
                         ) -> jnp.ndarray:
   """Transforms the input data with the carryover function and exponent.
@@ -680,13 +696,14 @@ def transform_ensemble(media_data: jnp.ndarray,
     
 
   n_models = transformed_media.shape[0]# len(_ENSEMBLE_ADSTOCK_TRANSFORMS) * len(_ENSEMBLE_SATURATION_TRANSFORMS)
+  default_priors = _get_default_priors()
 
   with numpyro.plate(
-      name=f"transform_weights_plate",
+      name=f"{_MEDIA_TRANSFORM_WEIGHTS}_plate",
       size=n_models):
     model_weights = numpyro.sample(
-      name='transform_weights',
-      fn=dist.Beta(concentration1=1.0, concentration0=1.0)
+      name=_MEDIA_TRANSFORM_WEIGHTS,
+      fn=default_priors[_MEDIA_TRANSFORM_WEIGHTS]
     )
 
   model_weights = model_weights / model_weights.sum()
@@ -1004,7 +1021,7 @@ def calculate_media_effects(
   # In case of daily data, number of lags should be 13*7.
   transform_kwargs = transform_kwargs or {}
   if transform_function in carryover_models:
-    transform_kwargs['number_lags'] = 13 if frequency == 52 else 60
+    transform_kwargs['number_lags'] = 13 if frequency == 52 else 30
 
   media_transformed = apply_media_transform_function(
     transform_function,
@@ -1026,7 +1043,8 @@ def calculate_media_effects(
       coef_media = numpyro.sample(
           name="channel_coef_media" if media_data.ndim == 3 else "coef_media",
           #fn=dist.TruncatedNormal(loc=media_prior, scale=0.05, low=1e-6)
-          fn=dist.HalfNormal(scale=media_prior)
+          #fn=dist.HalfNormal(scale=media_prior)
+          fn=_generate_media_prior_distribution(media_prior)
         )#)
       if media_data.ndim == 3:
         with numpyro.plate(
@@ -1037,7 +1055,8 @@ def calculate_media_effects(
           normalisation_factor = jnp.sqrt(2.0 / jnp.pi)
           coef_media = numpyro.sample(
               name="coef_media",
-              fn=dist.HalfNormal(scale=coef_media * normalisation_factor)
+              fn=_generate_media_prior_distribution(coef_media * normalisation_factor)
+              #fn=dist.HalfNormal(scale=coef_media * normalisation_factor)
           )
 
     # For national model's case
@@ -1098,7 +1117,8 @@ def calculate_media_effects(
         coef_media = numpyro.sample(
             name="channel_coef_media_models" if media_data.ndim == 3 else "coef_media_models",
             #fn=dist.TruncatedNormal(loc=media_prior, scale=0.05, low=1e-6)
-            fn=dist.HalfNormal(scale=media_prior)
+            #fn=dist.HalfNormal(scale=media_prior)
+            fn=_generate_media_prior_distribution(media_prior)
           )#)
         if media_data.ndim == 3:
           with numpyro.plate(
@@ -1109,7 +1129,8 @@ def calculate_media_effects(
             normalisation_factor = jnp.sqrt(2.0 / jnp.pi)
             coef_media = numpyro.sample(
                 name="coef_media_models",
-                fn=dist.HalfNormal(scale=coef_media * normalisation_factor)
+                fn=_generate_media_prior_distribution(coef_media * normalisation_factor)
+                #fn=dist.HalfNormal(scale=coef_media * normalisation_factor)
             )
     # coef_media = numpyro.deterministic(
     #   name='coef_media',
@@ -1128,11 +1149,12 @@ def calculate_media_effects(
 
     n_models = len(_ENSEMBLE_ADSTOCK_TRANSFORMS) * len(_ENSEMBLE_SATURATION_TRANSFORMS)
 
-    with numpyro.plate(name='model_weight_plate', size=n_models):
+    with numpyro.plate(name=F'{_MODEL_WEIGHTS}_plate', size=n_models):
       weights = numpyro.sample(
-        'model_weights',
-        fn=dist.Beta(1.0, 1.0)
+        _MODEL_WEIGHTS,
+        fn=default_priors[_MODEL_WEIGHTS]
       )
+    weights = weights / weights.sum()
 
     #weights = weights / weights.sum()
     channel_einsum = "mtc, m -> tc"
@@ -1232,6 +1254,11 @@ def media_mix_model(
         name=_SIGMA,
         fn=custom_priors.get(_SIGMA, default_priors[_SIGMA]))
 
+  with numpyro.plate(name=f"{_DEGREES_FREEDOM}_plate", size=n_geos):
+    degrees_freedom = numpyro.sample(
+      name=_DEGREES_FREEDOM,
+      fn=custom_priors.get(_DEGREES_FREEDOM, default_priors[_DEGREES_FREEDOM])
+    )
 
 
   seasonal_effects = calculate_seasonal_effects(
@@ -1310,8 +1337,14 @@ def media_mix_model(
 
   mu = numpyro.deterministic(name="mu", value=prediction)
 
+
+  # A studentT distribution is more resilient to outliers, than a normal distr
   numpyro.sample(
-      name="target", fn=dist.Normal(loc=mu, scale=sigma), obs=target_data)
+    name="target",
+    fn=dist.StudentT(degrees_freedom, loc=mu, scale=sigma),
+    #fn=dist.Normal(loc=mu, scale=sigma),
+    obs=target_data
+  )
 
 
 # # DEFUNCT

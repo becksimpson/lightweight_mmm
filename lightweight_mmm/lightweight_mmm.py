@@ -177,6 +177,14 @@ class LightweightMMM:
     self._model_transform_function = _NAMES_TO_MODEL_TRANSFORMS[self.model_name]
     self._prior_names = models.MODEL_PRIORS_NAMES.union(
         models.TRANSFORM_PRIORS_NAMES[self.model_name])
+    if self.model_name == 'ensemble':
+      self._prior_names = self._prior_names.union(
+        [models._MODEL_WEIGHTS]
+      )
+    if self.model_name == 'ensemble_avg':
+      self._prior_names = self._prior_names.union(
+        [models._MEDIA_TRANSFORM_WEIGHTS]
+      )
 
   def __eq__(self, other: Any) -> bool:
     """Equality method for LightweightMMMM.
