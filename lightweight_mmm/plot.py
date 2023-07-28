@@ -142,7 +142,8 @@ def _calculate_number_rows_plot(n_media_channels: int, n_columns: int):
 
 
 def _calculate_media_contribution(
-    media_mix_model: lightweight_mmm.LightweightMMM) -> jnp.ndarray:
+  media_mix_model
+) -> jnp.ndarray:
   """Computes contribution for each sample, time, channel.
 
   Serves as a helper function for making predictions for each channel, time
@@ -151,32 +152,76 @@ def _calculate_media_contribution(
   plot.
 
   Args:
-    media_mix_model: Media mix model.
+      media_mix_model: Media mix model.
 
   Returns:
-    Estimation of contribution for each sample, time, channel.
+      Estimation of contribution for each sample, time, channel.
 
   Raises:
-    NotFittedModelError: if the model is not fitted before computation
+      NotFittedModelError: if the model is not fitted before computation
   """
   if not hasattr(media_mix_model, "trace"):
-    raise lightweight_mmm.NotFittedModelError(
-        "Model needs to be fit first before attempting to plot its fit.")
+      raise lightweight_mmm.NotFittedModelError(
+          "Model needs to be fit first before attempting to plot its fit.")
 
-  if media_mix_model.trace["media_transformed"].ndim > 3:
-    # s for samples, t for time, c for media channels, g for geo
-    einsum_str = "stcg, scg->stcg"
-  elif media_mix_model.trace["media_transformed"].ndim == 3:
-    # s for samples, t for time, c for media channels
-    einsum_str = "stc, sc->stc"
+  if 'channel_contribution' in media_mix_model.trace:
+      media_contribution = media_mix_model.trace['channel_contribution']
+  else:
+      if media_mix_model.trace["media_transformed"].ndim > 3:
+          # s for samples, t for time, c for media channels, g for geo
+          einsum_str = "stcg, scg->stcg"
+      elif media_mix_model.trace["media_transformed"].ndim == 3:
+          # s for samples, t for time, c for media channels
+          einsum_str = "stc, sc->stc"
 
-  media_contribution = jnp.einsum(einsum_str,
-                                  media_mix_model.trace["media_transformed"],
-                                  media_mix_model.trace["coef_media"])
-  if media_mix_model.trace["media_transformed"].ndim > 3:
-    # Aggregate media channel contribution across geos.
-    media_contribution = media_contribution.sum(axis=-1)
+      media_contribution = jnp.einsum(einsum_str,
+                                      media_mix_model.trace["media_transformed"],
+                                      media_mix_model.trace["coef_media"])
+      
+  if media_contribution.ndim > 3:
+      # Aggregate media channel contribution across geos.
+      media_contribution = media_contribution.sum(axis=-1)
   return media_contribution
+
+def _calculate_extra_features_contribution(
+  media_mix_model
+) -> jnp.ndarray:
+  """Computes contribution for each sample, extra feature channel.
+
+  Serves as a helper function for making predictions for each channel,
+  and estimate sample. It is meant to be used in creating media, control baseline
+  contribution dataframe and visualize media attribution over spend proportion
+  plot.
+
+  Args:
+      media_mix_model: Media mix model.
+
+  Returns:
+      Estimation of contribution for each sample, control channel. Not time-dependent
+
+  Raises:
+      NotFittedModelError: if the model is not fitted before computation
+  """
+  if not hasattr(media_mix_model, "trace"):
+      raise lightweight_mmm.NotFittedModelError(
+          "Model needs to be fit first before attempting to plot its fit.")
+  
+  if media_mix_model.trace[models._COEF_EXTRA_FEATURES].ndim > 2:
+      # s for samples, c for media channels, g for geo
+      einsum_str = "tfg, sfg->stfg"
+  elif media_mix_model.trace[models._COEF_EXTRA_FEATURES].ndim == 2:
+      # s for samples, t for time, c for media channels
+      einsum_str = "tf, sf->stf"
+  else:
+      raise ValueError(F'Unknown ndim _COEF_EXTRA_FEATURES: {media_mix_model.trace[models._COEF_EXTRA_FEATURES].ndim}')
+
+  extra_features_contribution = jnp.einsum(einsum_str,
+                                  media_mix_model._extra_features,
+                                  media_mix_model.trace[models._COEF_EXTRA_FEATURES])
+  if media_mix_model.trace[models._COEF_EXTRA_FEATURES].ndim > 3:
+      # Aggregate media channel contribution across geos.
+      extra_features_contribution = extra_features_contribution.sum(axis=-1)
+  return extra_features_contribution
 
 
 def create_attribution_over_spend_fractions(
@@ -279,7 +324,7 @@ def create_media_baseline_contribution_df(
   # Calculate the baseline contribution.
   # Scaled prediction - sum of scaled contribution across channels.
   scaled_prediction = media_mix_model.trace["mu"]
-  if media_mix_model.trace["media_transformed"].ndim > 3:
+  if scaled_prediction.ndim > 2:
     # Sum up the scaled prediction across all the geos.
     scaled_prediction = scaled_prediction.sum(axis=-1)
   baseline_contribution = scaled_prediction - sum_scaled_media_contribution_across_channels
@@ -331,7 +376,7 @@ def create_media_baseline_contribution_df(
     posterior_pred = target_scaler.inverse_transform(posterior_pred)
 
   # Take the sum of posterior predictions across geos.
-  if media_mix_model.trace["media_transformed"].ndim > 3:
+  if posterior_pred.ndim > 2:
     posterior_pred = posterior_pred.sum(axis=-1)
 
   # Take the average of the inverse transformed prediction across samples.
@@ -362,6 +407,183 @@ def create_media_baseline_contribution_df(
 
   period = np.arange(1, contribution_df.shape[0] + 1)
   contribution_df.loc[:, "period"] = period
+  return contribution_df
+
+
+def create_segmented_contribution_df(
+    media_mix_model,
+    target_scaler= None,
+) -> pd.DataFrame:
+  """Creates a dataframe for media channels, extra features, seasonality, trend contribution.
+
+  The output dataframe will be used to create a stacked area plot to visualize
+  the contribution of each media channels & baseline.
+
+  Args:
+      media_mix_model: Media mix model.
+      target_scaler: Scaler used for scaling the target.
+      channel_names: Names of media channels.
+
+  Returns:
+      contribution_df: DataFrame of weekly channels & baseline contribution
+      percentage & volume.
+  """
+  channel_names = media_mix_model.media_names
+  extra_features_names = media_mix_model.extra_features_names
+
+  # Create media contribution matrix
+  scaled_media_contribution = _calculate_media_contribution(media_mix_model)
+
+  # Aggregate media channel contribution across samples.
+  sum_scaled_media_contribution_across_samples = scaled_media_contribution.sum(
+      axis=0)
+  # Aggregate media channel contribution across channels.
+  sum_scaled_media_contribution_across_channels = scaled_media_contribution.sum(
+      axis=2)
+  
+  seasonality_contributions = media_mix_model.trace["total_seasonality"]
+  trend_contributions = media_mix_model.trace['total_trend']
+  
+  scaled_extra_features_contribution = _calculate_extra_features_contribution(media_mix_model)
+  sum_scaled_extra_features_contribution_across_samples = scaled_extra_features_contribution.sum(
+      axis=0)
+  # Aggregate media channel contribution across channels.
+  sum_scaled_extra_features_contribution_across_channels = scaled_extra_features_contribution.sum(
+      axis=2)
+
+  # Calculate the baseline contribution.
+  # Scaled prediction - sum of scaled contribution across channels.
+  scaled_prediction = media_mix_model.trace["mu"]
+
+  baseline_contribution = (
+      scaled_prediction - sum_scaled_media_contribution_across_channels \
+      - seasonality_contributions - trend_contributions - sum_scaled_extra_features_contribution_across_channels
+  )
+  # Sum up the scaled media, baseline contribution and predictions across samples.
+  sum_scaled_media_contribution_across_channels_samples = sum_scaled_media_contribution_across_channels.sum(
+      axis=0)
+  sum_scaled_extra_features_contribution_across_channels_samples = sum_scaled_extra_features_contribution_across_channels.sum(
+      axis=0
+  )
+  sum_scaled_baseline_contribution_across_samples = baseline_contribution.sum(
+      axis=0)
+  sum_scaled_trend_contributions_across_samples = trend_contributions.sum(axis=0)
+  sum_scaled_seasonality_contributions_across_samples = seasonality_contributions.sum(axis=0)
+
+
+  # Adjust baseline contribution and prediction when there's any negative value.
+  adjusted_sum_scaled_baseline_contribution_across_samples = np.where(
+      sum_scaled_baseline_contribution_across_samples < 0, 0,
+      sum_scaled_baseline_contribution_across_samples)
+  adjusted_sum_scaled_prediction_across_samples = (
+      adjusted_sum_scaled_baseline_contribution_across_samples + \
+      sum_scaled_media_contribution_across_channels_samples + \
+      sum_scaled_trend_contributions_across_samples + \
+      sum_scaled_seasonality_contributions_across_samples + \
+      sum_scaled_extra_features_contribution_across_channels_samples
+  )
+
+  # Calculate the media and baseline pct.
+  # Media/baseline contribution across samples/total prediction across samples.
+  media_contribution_pct_by_channel = (
+      sum_scaled_media_contribution_across_samples /
+      adjusted_sum_scaled_prediction_across_samples.reshape(-1, 1))
+  # Adjust media pct contribution if the value is nan
+  media_contribution_pct_by_channel = np.nan_to_num(
+      media_contribution_pct_by_channel)
+  
+  extra_features_contribution_pct_by_channel = (
+      sum_scaled_extra_features_contribution_across_samples /
+      adjusted_sum_scaled_prediction_across_samples.reshape(-1, 1))
+  # Adjust media pct contribution if the value is nan
+  extra_features_contribution_pct_by_channel = np.nan_to_num(
+      extra_features_contribution_pct_by_channel)
+
+
+  baseline_contribution_pct = adjusted_sum_scaled_baseline_contribution_across_samples / adjusted_sum_scaled_prediction_across_samples
+  # Adjust baseline pct contribution if the value is nan
+  baseline_contribution_pct = np.nan_to_num(
+      baseline_contribution_pct)
+  
+  trend_contribution_pct = (
+      sum_scaled_trend_contributions_across_samples / 
+      adjusted_sum_scaled_prediction_across_samples
+  )
+  trend_contribution_pct = np.nan_to_num(trend_contribution_pct)
+  
+  seasonality_contribution_pct = (
+      sum_scaled_seasonality_contributions_across_samples / 
+      adjusted_sum_scaled_prediction_across_samples
+  )
+  seasonality_contribution_pct = np.nan_to_num(seasonality_contribution_pct)
+
+
+  # If the channel_names is none, then create naming covention for the channels.
+  if channel_names is None:
+      channel_names = media_mix_model.media_names
+
+  # Create media/baseline contribution pct as dataframes.
+  media_contribution_pct_by_channel_df = pd.DataFrame(
+      media_contribution_pct_by_channel, columns=channel_names)
+  extra_features_contribution_pct_by_channel_df = pd.DataFrame(
+      extra_features_contribution_pct_by_channel, columns=extra_features_names
+  )
+
+  baseline_contribution_pct_df = pd.DataFrame(
+      np.concatenate([
+          baseline_contribution_pct.reshape(-1, 1),
+          trend_contribution_pct.reshape(-1, 1),
+          seasonality_contribution_pct.reshape(-1, 1),
+      ], axis=1), columns=["baseline", 'trend', 'seasonality'])
+  contribution_pct_df = pd.concat(
+      [
+          media_contribution_pct_by_channel_df,
+          extra_features_contribution_pct_by_channel_df,
+          baseline_contribution_pct_df,
+      ]
+  , join='inner', axis=1, ignore_index=False)
+
+
+  # If there's target scaler then inverse transform the posterior prediction.
+  posterior_pred = media_mix_model.trace["mu"]
+  if target_scaler:
+      posterior_pred = target_scaler.inverse_transform(posterior_pred)
+
+  # Take the sum of posterior predictions across geos.
+  if posterior_pred.ndim > 2:
+      posterior_pred = posterior_pred.sum(axis=-1)
+
+  # Take the average of the inverse transformed prediction across samples.
+  posterior_pred_df = pd.DataFrame(
+      posterior_pred.mean(axis=0), columns=["avg_prediction"])
+
+  # Adjust prediction value when prediction is less than 0.
+  posterior_pred_df["avg_prediction"] = np.where(
+      posterior_pred_df["avg_prediction"] < 0, 0,
+      posterior_pred_df["avg_prediction"])
+
+  contribution_pct_df.columns = [
+      "{}_percentage".format(col) for col in contribution_pct_df.columns
+  ]
+  contribution_df = pd.merge(
+      contribution_pct_df, posterior_pred_df, left_index=True, right_index=True)
+
+  # Create contribution by multiplying average prediction by media/baseline pct.
+  for channel in [*channel_names, *extra_features_names]:
+      channel_contribution_col_name = "{}".format(channel)
+      channel_pct_col = "{}_percentage".format(channel)
+      contribution_df.loc[:, channel_contribution_col_name] = contribution_df[
+          channel_pct_col] * contribution_df["avg_prediction"]
+      contribution_df.loc[:, channel_contribution_col_name] = contribution_df[
+          channel_contribution_col_name].astype("float")
+      
+  for col in ['baseline', 'trend', 'seasonality']:
+      contribution_df.loc[:, f"{col}"] = contribution_df[
+          f"{col}_percentage"] * contribution_df["avg_prediction"]
+
+  period = np.arange(1, contribution_df.shape[0] + 1)
+  contribution_df.loc[:, "period"] = period
+
   return contribution_df
 
 
@@ -447,7 +669,8 @@ def plot_response_curves(# jax-ndarray
 
   prediction_offset = media_mix_model.predict(
       media=jnp.zeros((1, *media.shape[1:])),
-      extra_features=extra_features).mean(axis=0)
+      extra_features=extra_features
+  ).mean(axis=0)
 
   if media.ndim == 3:
     diagonal = jnp.expand_dims(diagonal, axis=-1)
@@ -792,37 +1015,58 @@ def plot_media_channel_posteriors(
     raise lightweight_mmm.NotFittedModelError(
         "Model needs to be fit first before attempting to plot its fit.")
 
-  n_media_channels = np.shape(media_mix_model.trace["coef_media"])[1]
+  if 'coef_media_models' in media_mix_model.trace:
+    coef_media_models = jnp.moveaxis(
+      media_mix_model.trace["coef_media_models"],
+      [0], [1]
+    )
+    model_names = [
+      fn_adstock.__name__ + '_' + fn_sat.__name__
+      for fn_adstock in models._ENSEMBLE_ADSTOCK_TRANSFORMS.values()
+      for fn_sat in models._ENSEMBLE_SATURATION_TRANSFORMS.values()
+    ]
+  else:
+    coef_media_models = jnp.expand_dims(media_mix_model.trace["coef_media"], 0)
+    model_names = [None]
+
+  n_media_channels = np.shape(coef_media_models[0])[1]
   n_geos = (
-      media_mix_model.media.shape[2] if media_mix_model.media.ndim == 3 else 1)
+      media_mix_model.media.shape[2]
+      if media_mix_model.media.ndim == 3
+      else 1
+  )
 
   if not fig_size:
     fig_size = (5 * n_geos, 3 * n_media_channels)
 
-  media_channel_posteriors = media_mix_model.trace["coef_media"]
   if channel_names is None:
-    channel_names = np.arange(np.shape(media_channel_posteriors)[1])
+    channel_names = np.arange(n_media_channels)
+
   fig, axes = plt.subplots(
       nrows=n_media_channels, ncols=n_geos, figsize=fig_size)
   for channel_i, channel_axis in enumerate(axes):
-    if isinstance(channel_axis, np.ndarray):
-      for geo_i, geo_axis in enumerate(channel_axis):
-        geo_axis = arviz.plot_kde(
-            media_channel_posteriors[:, channel_i, geo_i],
+    for idx, coef_media in enumerate(coef_media_models):
+      media_channel_posteriors = coef_media
+      if isinstance(channel_axis, np.ndarray):
+        for geo_i, geo_axis in enumerate(channel_axis):
+          _ = arviz.plot_kde(
+              media_channel_posteriors[:, channel_i, geo_i],
+              quantiles=quantiles,
+              ax=geo_axis
+            )
+          axis_label = f"media channel {channel_names[channel_i]} geo {geo_i}"
+          geo_axis.set_xlabel(axis_label)
+      else:
+        _ = arviz.plot_kde(
+            media_channel_posteriors[:, channel_i],
             quantiles=quantiles,
-            ax=geo_axis)
-        axis_label = f"media channel {channel_names[channel_i]} geo {geo_i}"
-        geo_axis.set_xlabel(axis_label)
-    else:
-      channel_axis = arviz.plot_kde(
-          media_channel_posteriors[:, channel_i],
-          quantiles=quantiles,
-          ax=channel_axis)
-      axis_label = f"media channel {channel_names[channel_i]}"
-      channel_axis.set_xlabel(axis_label)
-
+            ax=channel_axis,
+            #label=model_names[idx],
+        )
+        axis_label = f"media channel {channel_names[channel_i]}"
+    channel_axis.set_title(axis_label)
+    #channel_axis.legend(loc='upper left')
   fig.tight_layout()
-  plt.close()
   return fig
 
 
@@ -1083,6 +1327,7 @@ def _make_prior_and_posterior_subplot_for_one_feature(
     number_of_samples_for_prior: int = 5000,
     kde_bandwidth_adjust_for_posterior: float = 1,
     seed: Optional[int] = None,
+    posterior_names: List[str] = None,
 ) -> Tuple[matplotlib.figure.Figure, matplotlib.gridspec.GridSpec, int]:
   """Helper function to make the prior and posterior distribution subplots.
 
@@ -1166,17 +1411,42 @@ def _make_prior_and_posterior_subplot_for_one_feature(
       lw=4,
       clip=clipping_bounds,
       color="tab:blue", ax=ax, label="prior")
+  ax.axvline(np.median(prior_samples), linestyle='--', color='tab:blue', label='prior median')
   prior_xlims = ax.get_xlim()
 
-  sns.kdeplot(
-      data=posterior_samples.flatten(),
-      lw=4,
-      clip=clipping_bounds,
-      cut=0,
-      bw_adjust=kde_bandwidth_adjust_for_posterior,
-      color="tab:orange", ax=ax, label="posterior")
-  posterior_xlims = ax.get_xlim()
+  if posterior_samples.ndim == 1:
+    sns.kdeplot(
+        data=posterior_samples.flatten(),
+        lw=4,
+        clip=clipping_bounds,
+        cut=0,
+        bw_adjust=kde_bandwidth_adjust_for_posterior,
+        color="tab:orange", ax=ax, label="posterior")
+    ax.axvline(np.median(posterior_samples.flatten()), linestyle='--', color='tab:orange', label='posterior median')
+  else:
+    for i in range(posterior_samples.shape[1]):
+      #label = posterior_names[i] if posterior_names is not None else 'posterior'
+      #print(label)
+      sns.kdeplot(
+        data=posterior_samples[:, i].flatten(),
+        lw=4,
+        clip=clipping_bounds,
+        cut=0,
+        bw_adjust=kde_bandwidth_adjust_for_posterior,
+        color="tab:orange", ax=ax
+      )
+    ax.axvline(np.median(posterior_samples.flatten()), linestyle='--', color='tab:orange', label='posterior median')
+    sns.kdeplot(
+        data=np.squeeze(posterior_samples).flatten(),
+        lw=4,
+        clip=clipping_bounds,
+        cut=0,
+        bw_adjust=kde_bandwidth_adjust_for_posterior,
+        color="black", ax=ax,
+        label='avg posterior'
+    )
 
+  posterior_xlims = ax.get_xlim()
   ax.legend(loc="best")
   ax.set_xlim(
       min(prior_xlims[0], posterior_xlims[0]),
@@ -1231,17 +1501,37 @@ def _collect_features_for_prior_posterior_plot(
         "Model needs to be fit first in order to plot the posterior.")
 
   features = media_mix_model._prior_names
+  if media_mix_model.transform_hyperprior:
+    for prior, hyps in models._get_transform_hyperprior_distributions().items():
+      if prior in media_mix_model._prior_names:
+        features = features.union([
+          f'{prior}_{h}' for h, di in hyps.items()
+          if isinstance(di, numpyro.distributions.Distribution)
+        ])
+
   if not media_mix_model._weekday_seasonality:
     features = features.difference([models._WEEKDAY])
 
   if media_mix_model._extra_features is None:
     features = features.difference(["coef_extra_features"])
+  
+  if media_mix_model.doms is None:
+    features = features.difference([models._MULTIPLIER_DAY_OF_MONTH, models._PARAM_DAY_OF_MONTH])
 
   if media_mix_model.media.ndim == 2:
     features = features.difference(models.GEO_ONLY_PRIORS)
-    features = features.union(["coef_media"])
+  # Non-ensemble model
+  if 'coef_media' in media_mix_model.trace:
+    if media_mix_model.media.ndim == 2:
+      features = features.union(["coef_media"])
+    else:
+      features = features.union(["coef_media", "channel_coef_media"])
+  # Ensemble model
   else:
-    features = features.union(["coef_media", "channel_coef_media"])
+    if media_mix_model.media.ndim == 2:
+      features = features.union(['coef_media_models'])
+    else:
+      features = features.union(['coef_media_models', 'channel_coef_media_models'])
 
   if selected_features:
     extraneous_features = set(selected_features).difference(features)
@@ -1250,11 +1540,22 @@ def _collect_features_for_prior_posterior_plot(
           f"Selected_features {extraneous_features} not in media_mix_model.")
     features = selected_features
 
+  if media_mix_model.transform_hyperprior:
+    hyperprior_features = [
+      f'{prior}_{hyperprior}'
+      for prior, d in models._get_transform_hyperprior_distributions().items()
+      for hyperprior, dist in d.items()
+      #if prior in media_mix_model.
+    ]
+  else:
+    hyperprior_features = []
+
   geo_level_features = [
       models._COEF_SEASONALITY,
       models._COEF_TREND,
       models._INTERCEPT,
       models._SIGMA,
+      
   ]
   channel_level_features = [
       models._AD_EFFECT_RETENTION_RATE,
@@ -1263,12 +1564,20 @@ def _collect_features_for_prior_posterior_plot(
       models._LAG_WEIGHT,
       models._PEAK_EFFECT_DELAY,
       models._SLOPE,
+      models._SATURATION,
       "channel_coef_media",
       "coef_media",
+      'coef_media_models',
+      #*hyperprior_features
   ]
-  seasonal_features = [models._GAMMA_SEASONALITY]
+  seasonal_features = [
+    models._GAMMA_SEASONALITY
+  ]
   if media_mix_model._weekday_seasonality:
     seasonal_features.append(models._WEEKDAY)
+  if media_mix_model._month_seasonality:
+    seasonal_features += [models._PARAM_DAY_OF_MONTH, models._MULTIPLIER_DAY_OF_MONTH]
+
   other_features = list(set(features) - set(geo_level_features) -
                         set(channel_level_features) - set(seasonal_features))
 
@@ -1311,10 +1620,16 @@ def plot_prior_and_posterior(
     NotFittedModelError: media_mix_model has not yet been fit.
     ValueError: A feature has been created without a well-defined prior.
   """
+  # Prior default distributions exist where model is single known, fixed type 
+  if not hasattr(media_mix_model, 'model_name'):
+    print('Plot Posterior Predictives has not been implemented for ensemble.')
+    return
 
+  media_names = media_mix_model.media_names
+  extra_features_names = getattr(media_mix_model, 'extra_features_names', None)
   (features, geo_level_features, channel_level_features, seasonal_features,
-   other_features) = _collect_features_for_prior_posterior_plot(
-       media_mix_model, selected_features)
+    other_features) = _collect_features_for_prior_posterior_plot(
+        media_mix_model, selected_features)
 
   number_of_subplots = int(
       sum([
@@ -1330,8 +1645,26 @@ def plot_prior_and_posterior(
 
   default_priors = {
       **models._get_default_priors(),
-      **models._get_transform_default_priors()[media_mix_model.model_name]
   }
+  media_transform_priors = {
+    name: dist
+    for name, dist in models._get_transform_prior_distributions().items()
+    if name in models.TRANSFORM_PRIORS_NAMES[media_mix_model.model_name]
+  }
+  media_transform_hyperpriors = {}
+
+  default_priors = {
+    **default_priors,
+  }
+  # No hyperpriors - known priors
+  if media_mix_model.transform_hyperprior:
+    #Plots for hyperpriors
+    media_transform_hyperpriors = {
+      f'{prior}_{hyperprior}': dist
+      for prior, d in models._get_transform_hyperprior_distributions().items()
+      for hyperprior, dist in d.items()
+      if prior in media_transform_priors.keys()
+    }
 
   kwargs_for_helper_function = {
       "fig": fig,
@@ -1347,24 +1680,125 @@ def plot_prior_and_posterior(
     if feature not in features:
       continue
 
-    if feature in media_mix_model.custom_priors:
+    # Hyperpriors don't have custom priors
+    if feature in media_transform_hyperpriors.keys():
+      prior_distribution = media_transform_hyperpriors[feature]
+    # Custom Priors take precedence
+    elif feature in media_mix_model.custom_priors:
       prior_distribution = media_mix_model.custom_priors[feature]
-      if not isinstance(prior_distribution, numpyro.distributions.Distribution):
+      # Dict level custom priors, construct array for each media_channel
+      if isinstance(prior_distribution, dict):
+        if feature not in media_transform_priors.keys():
+          raise ValueError('Dict mapping custom features only supported for media_transform_priors')
+        # Prior takes precedence if no transform_hyperprior
+        if not media_mix_model.transform_hyperprior:
+          prior_distributions = [media_transform_priors[feature] for _ in range(len(media_names))]
+        # Hyperpriors - sample mean of learned distribution
+        else:
+          feature_hyperpriors = models._get_transform_hyperprior_distributions()[feature]
+          prior_cls = models._get_transform_prior_distributions()[feature].__class__
+
+          if prior_cls != numpyro.distributions.Beta:
+            mean_hyperprior_posterior_samples = {
+              hyp: (
+                val if not isinstance(val, numpyro.distributions.Distribution)
+                else media_mix_model.trace[feature+'_'+hyp].mean()
+              )
+              for hyp, val in feature_hyperpriors.items()
+            }
+          else:
+            mean_hyperprior_posterior_samples = {
+              'concentration1': 9 - media_mix_model.trace[feature+'_concentration'].mean(),
+              'concentration0': 1 + media_mix_model.trace[feature+'_concentration'].mean(),
+            }
+          # mean_hyperprior_posterior_samples = {
+          #   hyp: media_mix_model.trace[feature+'_'+hyp].mean()
+          #   for hyp in feature_hyperpriors
+          # }
+          print(f'Mean Hyperpriors for {feature} is {mean_hyperprior_posterior_samples}')
+          prior_distributions = [
+            prior_cls(
+              **mean_hyperprior_posterior_samples
+            )
+            for _ in range(len(media_names))
+          ]
+          #prior_distributions = [None for _ in range(len(media_names))]
+        for idx, prior in prior_distribution.items():
+          prior_distributions[idx] = prior
+      elif not isinstance(prior_distribution, numpyro.distributions.Distribution):
         raise ValueError(f"{feature} cannot be plotted.")
+      prior_distribution = prior_distributions
     elif feature in default_priors.keys():
       prior_distribution = default_priors[feature]
-    elif feature in ("channel_coef_media", "coef_media"):
+    elif feature in media_transform_priors.keys():
+      # Prior takes precedence if no transform_hyperprior
+      if not media_mix_model.transform_hyperprior:
+        prior_distribution = media_transform_priors[feature]
+      # Hyperpriors - sample mean of learned distribution
+      else:
+        feature_hyperpriors = models._get_transform_hyperprior_distributions()[feature]
+        prior_cls = models._get_transform_prior_distributions()[feature].__class__
+
+        if prior_cls != numpyro.distributions.Beta:
+          mean_hyperprior_posterior_samples = {
+            hyp: (
+              val if not isinstance(val, numpyro.distributions.Distribution)
+              else media_mix_model.trace[feature+'_'+hyp].mean()
+            )
+            for hyp, val in feature_hyperpriors.items()
+          }
+        else:
+          mean_hyperprior_posterior_samples = {
+            'concentration1': 9 - media_mix_model.trace[feature+'_concentration'].mean(),
+            'concentration0': 1 + media_mix_model.trace[feature+'_concentration'].mean(),
+          }
+
+        print(f'Mean Hyperpriors for {feature} is {mean_hyperprior_posterior_samples}')
+        prior_distribution = prior_cls(
+          **mean_hyperprior_posterior_samples
+        )
+    elif feature in ("channel_coef_media", "coef_media", 'coef_media_models'):
       # We have to fill this in later since the prior varies by channel.
       prior_distribution = None
     else:
       # This should never happen.
-      raise ValueError(f"{feature} has no prior specified.")
+      #raise ValueError(f"{feature} has no prior specified.")
+      print(f'{feature} not found to have fixed prior distribution')
+      continue
     kwargs_for_helper_function["prior_distribution"] = prior_distribution
+
+    if feature in [models._MEDIA_TRANSFORM_WEIGHTS, models._MODEL_WEIGHTS]:
+      ensemble_names = [
+        fn_adstock.__name__ + '_' + fn_sat.__name__
+        for fn_adstock in models._ENSEMBLE_ADSTOCK_TRANSFORMS.values()
+        for fn_sat in models._ENSEMBLE_SATURATION_TRANSFORMS.values()
+      ]
+      # Check between training & plotting use same ensemble def
+      if media_mix_model.trace[feature].shape[1] != len(ensemble_names):
+        ensemble_names = [f'model_{i}' for i in range(media_mix_model.trace[feature].shape[1])]
+
+      for i_feature in range(media_mix_model.trace[feature].shape[1]):
+        for j_geo in range(media_mix_model.n_geos):
+          subplot_title = f"{feature} feature {ensemble_names[i_feature]}"
+          if media_mix_model.n_geos == 1:
+            posterior_samples = np.array(
+                media_mix_model.trace[feature][:, i_feature])
+          else:
+            subplot_title += f', geo {j_geo}'
+            posterior_samples = np.array(
+                media_mix_model.trace[feature][:, i_feature, j_geo])
+          (fig, gridspec_fig,
+            i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+                posterior_samples=posterior_samples,
+                subplot_title=subplot_title,
+                i_ax=i_ax,
+                **kwargs_for_helper_function)
 
     if feature == models._COEF_EXTRA_FEATURES:
       for i_feature in range(media_mix_model.trace[feature].shape[1]):
         for j_geo in range(media_mix_model.n_geos):
-          subplot_title = f"{feature} feature {i_feature}, geo {j_geo}"
+          ch = extra_features_names[i_feature] if extra_features_names is not None else i_feature
+          subplot_title = f"{feature} feature {ch}, geo {j_geo}"
           if media_mix_model.n_geos == 1:
             posterior_samples = np.array(
                 media_mix_model.trace[feature][:, i_feature])
@@ -1372,42 +1806,89 @@ def plot_prior_and_posterior(
             posterior_samples = np.array(
                 media_mix_model.trace[feature][:, i_feature, j_geo])
           (fig, gridspec_fig,
-           i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
-               posterior_samples=posterior_samples,
-               subplot_title=subplot_title,
-               i_ax=i_ax,
-               **kwargs_for_helper_function)
+            i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+                posterior_samples=posterior_samples,
+                subplot_title=subplot_title,
+                i_ax=i_ax,
+                **kwargs_for_helper_function)
 
     if feature in geo_level_features:
       for i_geo in range(media_mix_model.n_geos):
         subplot_title = f"{feature}, geo {i_geo}"
         posterior_samples = np.array(media_mix_model.trace[feature][:, i_geo])
         (fig, gridspec_fig,
-         i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
-             posterior_samples=posterior_samples,
-             subplot_title=subplot_title,
-             i_ax=i_ax,
-             **kwargs_for_helper_function)
+          i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+              posterior_samples=posterior_samples,
+              subplot_title=subplot_title,
+              i_ax=i_ax,
+              **kwargs_for_helper_function)
 
     if feature in channel_level_features:
       for i_channel in range(media_mix_model.n_media_channels):
-        subplot_title = f"{feature}, channel {i_channel}"
-        if feature in ("channel_coef_media", "coef_media"):
-          prior_distribution = numpyro.distributions.continuous.HalfNormal(
-              scale=jnp.squeeze(media_mix_model._media_prior[i_channel]))
-        posterior_samples = np.array(
-            jnp.squeeze(media_mix_model.trace[feature][:, i_channel]))
-        kwargs_for_helper_function["prior_distribution"] = prior_distribution
+        # Early exit for fixed custom priors, for hyperpriors
+        if feature in media_transform_hyperpriors.keys() and media_mix_model.custom_priors.get(feature.rsplit('_', 1)[0], {}).get(i_channel, None) is not None:
+          print(f'Feature {feature} has a custom_prior, so hyperprior not plotted')
+          continue
+
+        subplot_title = f"{feature}, {media_names[i_channel]}"
+        if feature in ("channel_coef_media", "coef_media", "coef_media_models"):
+          # NOTE: I changed this
+          # prior_distribution = numpyro.distributions.TruncatedNormal(
+          #     loc=jnp.squeeze(media_mix_model._media_prior[i_channel]),
+          #     scale=0.05,
+          #     low=1e-6
+          # )
+          prior_distribution = models._generate_media_prior_distribution(
+            jnp.squeeze(media_mix_model._media_prior[i_channel])
+          )
+          # prior_distribution = numpyro.distributions.continuous.HalfNormal(
+          #     scale=jnp.squeeze(media_mix_model._media_prior[i_channel]))
+        if isinstance(prior_distribution, numpyro.distributions.Distribution):
+          kwargs_for_helper_function["prior_distribution"] = prior_distribution
+        elif isinstance(prior_distribution, list):
+          kwargs_for_helper_function["prior_distribution"] = prior_distribution[i_channel]
+        else:
+          raise ValueError(
+            f'Channel level feature {feature}, has invalid prior_distribution type {type(prior_distribution)}'
+          )
+        
+        if feature == 'coef_media_models':
+          posterior_samples = np.array(
+              media_mix_model.trace[feature][:, :, i_channel])
+          print(posterior_samples.shape)
+          posterior_names = [f'model_{i}' for i in range(posterior_samples.shape[0])]
+        else:
+          posterior_samples = np.array(
+              jnp.squeeze(media_mix_model.trace[feature][:, i_channel]))
+          posterior_names = None
+          
         hyperprior = feature == "channel_coef_media"
         (fig, gridspec_fig,
-         i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
-             posterior_samples=posterior_samples,
-             subplot_title=subplot_title,
-             i_ax=i_ax,
-             hyperprior=hyperprior,
-             **kwargs_for_helper_function)
+          i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+              posterior_samples=posterior_samples,
+              subplot_title=subplot_title,
+              i_ax=i_ax,
+              hyperprior=hyperprior,
+              posterior_names=posterior_names,
+              **kwargs_for_helper_function
+            )
+        # if feature == 'coef_media':
+        #   fig.axes[i_ax - 1].set_xlim(0, 0.4)
+        # if feature == 'ad_effect_retention_rate':
+        #   fig.axes[i_ax - 1].set_xlim(0, 1.0)
 
-    if feature in seasonal_features:
+    if feature == models._WEEKDAY:
+      for i_day in range(6):
+        subplot_title = f"{feature}, day {i_day}"
+        posterior_samples = np.array(media_mix_model.trace[feature][:, i_day])
+        (fig, gridspec_fig,
+          i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+              posterior_samples=posterior_samples,
+              subplot_title=subplot_title,
+              i_ax=i_ax,
+              **kwargs_for_helper_function)
+
+    if feature == models._GAMMA_SEASONALITY:
       for i_season in range(media_mix_model._degrees_seasonality):
         for j_season in range(2):
           sin_or_cos = "sin" if j_season == 0 else "cos"
@@ -1416,19 +1897,33 @@ def plot_prior_and_posterior(
                                                                       i_season,
                                                                       j_season])
           (fig, gridspec_fig,
-           i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
-               posterior_samples=posterior_samples,
-               subplot_title=subplot_title,
-               i_ax=i_ax,
-               **kwargs_for_helper_function)
+            i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+                posterior_samples=posterior_samples,
+                subplot_title=subplot_title,
+                i_ax=i_ax,
+                **kwargs_for_helper_function)
+          
+    if feature == models._PARAM_DAY_OF_MONTH:
+      for i_param in range(2):
+        alpha_or_beta = "alpha" if i_param == 0 else "beta"
+        subplot_title = f"{feature}, param:{alpha_or_beta}"
+        posterior_samples = np.array(media_mix_model.trace[feature][:,
+                                                                    i_param])
+        (fig, gridspec_fig,
+          i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+              posterior_samples=posterior_samples,
+              subplot_title=subplot_title,
+              i_ax=i_ax,
+              **kwargs_for_helper_function)
+    
 
-    if feature in other_features and feature != models._COEF_EXTRA_FEATURES:
+    if feature in [*other_features, models._MULTIPLIER_DAY_OF_MONTH] and feature != models._COEF_EXTRA_FEATURES:
       subplot_title = f"{feature}"
       posterior_samples = np.array(media_mix_model.trace[feature])
       (fig, gridspec_fig,
-       i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
-           posterior_samples=posterior_samples,
-           subplot_title=subplot_title,
-           i_ax=i_ax,
-           **kwargs_for_helper_function)
+        i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
+            posterior_samples=posterior_samples,
+            subplot_title=subplot_title,
+            i_ax=i_ax,
+            **kwargs_for_helper_function)
   return fig
