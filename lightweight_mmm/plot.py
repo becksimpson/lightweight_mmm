@@ -142,7 +142,8 @@ def _calculate_number_rows_plot(n_media_channels: int, n_columns: int):
 
 
 def _calculate_media_contribution(
-    media_mix_model: lightweight_mmm.LightweightMMM) -> jnp.ndarray:
+  media_mix_model
+) -> jnp.ndarray:
   """Computes contribution for each sample, time, channel.
 
   Serves as a helper function for making predictions for each channel, time
@@ -151,13 +152,13 @@ def _calculate_media_contribution(
   plot.
 
   Args:
-    media_mix_model: Media mix model.
+      media_mix_model: Media mix model.
 
   Returns:
-    Estimation of contribution for each sample, time, channel.
+      Estimation of contribution for each sample, time, channel.
 
   Raises:
-    NotFittedModelError: if the model is not fitted before computation
+      NotFittedModelError: if the model is not fitted before computation
   """
   if not hasattr(media_mix_model, "trace"):
       raise lightweight_mmm.NotFittedModelError(
@@ -182,44 +183,44 @@ def _calculate_media_contribution(
       media_contribution = media_contribution.sum(axis=-1)
   return media_contribution
 
-
 def _calculate_extra_features_contribution(
-    media_mix_model: lightweight_mmm.LightweightMMM) -> jnp.ndarray:
-  """Computes contribution for each sample, time, extra feature channel.
+  media_mix_model
+) -> jnp.ndarray:
+  """Computes contribution for each sample, extra feature channel.
 
-  Serves as a helper function for making predictions for each channel, time
-  and estimate sample. It is meant to be used in creating media baseline
+  Serves as a helper function for making predictions for each channel,
+  and estimate sample. It is meant to be used in creating media, control baseline
   contribution dataframe and visualize media attribution over spend proportion
   plot.
 
   Args:
-    media_mix_model: Media mix model.
+      media_mix_model: Media mix model.
 
   Returns:
-    Estimation of contribution for each sample, time, control channel.
+      Estimation of contribution for each sample, control channel. Not time-dependent
 
   Raises:
-    NotFittedModelError: if the model is not fitted before computation
+      NotFittedModelError: if the model is not fitted before computation
   """
   if not hasattr(media_mix_model, "trace"):
-    raise lightweight_mmm.NotFittedModelError(
-        "Model needs to be fit first before attempting to plot its fit.")
-
+      raise lightweight_mmm.NotFittedModelError(
+          "Model needs to be fit first before attempting to plot its fit.")
+  
   if media_mix_model.trace[models._COEF_EXTRA_FEATURES].ndim > 2:
-    # s for samples, c for media channels, g for geo
-    einsum_str = "tfg, sfg->stfg"
+      # s for samples, c for media channels, g for geo
+      einsum_str = "tfg, sfg->stfg"
   elif media_mix_model.trace[models._COEF_EXTRA_FEATURES].ndim == 2:
-    # s for samples, t for time, c for media channels
-    einsum_str = "tf, sf->stf"
+      # s for samples, t for time, c for media channels
+      einsum_str = "tf, sf->stf"
   else:
-    raise ValueError(F'Unknown ndim _COEF_EXTRA_FEATURES: {media_mix_model.trace[models._COEF_EXTRA_FEATURES].ndim}')
+      raise ValueError(F'Unknown ndim _COEF_EXTRA_FEATURES: {media_mix_model.trace[models._COEF_EXTRA_FEATURES].ndim}')
 
   extra_features_contribution = jnp.einsum(einsum_str,
                                   media_mix_model._extra_features,
                                   media_mix_model.trace[models._COEF_EXTRA_FEATURES])
   if media_mix_model.trace[models._COEF_EXTRA_FEATURES].ndim > 3:
-    # Aggregate media channel contribution across geos.
-    extra_features_contribution = extra_features_contribution.sum(axis=-1)
+      # Aggregate media channel contribution across geos.
+      extra_features_contribution = extra_features_contribution.sum(axis=-1)
   return extra_features_contribution
 
 
@@ -410,8 +411,8 @@ def create_media_baseline_contribution_df(
 
 
 def create_segmented_contribution_df(
-    media_mix_model: lightweight_mmm.LightweightMMM,
-    target_scaler: Optional[preprocessing.CustomScaler] = None,
+    media_mix_model,
+    target_scaler= None,
 ) -> pd.DataFrame:
   """Creates a dataframe for media channels, extra features, seasonality, trend contribution.
 
@@ -419,13 +420,13 @@ def create_segmented_contribution_df(
   the contribution of each media channels & baseline.
 
   Args:
-    media_mix_model: Media mix model.
-    target_scaler: Scaler used for scaling the target.
-    channel_names: Names of media channels.
+      media_mix_model: Media mix model.
+      target_scaler: Scaler used for scaling the target.
+      channel_names: Names of media channels.
 
   Returns:
-    contribution_df: DataFrame of weekly channels & baseline contribution
-    percentage & volume.
+      contribution_df: DataFrame of weekly channels & baseline contribution
+      percentage & volume.
   """
   channel_names = media_mix_model.media_names
   extra_features_names = media_mix_model.extra_features_names
@@ -455,14 +456,14 @@ def create_segmented_contribution_df(
   scaled_prediction = media_mix_model.trace["mu"]
 
   baseline_contribution = (
-    scaled_prediction - sum_scaled_media_contribution_across_channels \
-    - seasonality_contributions - trend_contributions - sum_scaled_extra_features_contribution_across_samples
+      scaled_prediction - sum_scaled_media_contribution_across_channels \
+      - seasonality_contributions - trend_contributions - sum_scaled_extra_features_contribution_across_channels
   )
   # Sum up the scaled media, baseline contribution and predictions across samples.
   sum_scaled_media_contribution_across_channels_samples = sum_scaled_media_contribution_across_channels.sum(
       axis=0)
   sum_scaled_extra_features_contribution_across_channels_samples = sum_scaled_extra_features_contribution_across_channels.sum(
-    axis=0
+      axis=0
   )
   sum_scaled_baseline_contribution_across_samples = baseline_contribution.sum(
       axis=0)
@@ -475,11 +476,11 @@ def create_segmented_contribution_df(
       sum_scaled_baseline_contribution_across_samples < 0, 0,
       sum_scaled_baseline_contribution_across_samples)
   adjusted_sum_scaled_prediction_across_samples = (
-    adjusted_sum_scaled_baseline_contribution_across_samples + \
-    sum_scaled_media_contribution_across_channels_samples + \
-    sum_scaled_trend_contributions_across_samples + \
-    sum_scaled_seasonality_contributions_across_samples + \
-    sum_scaled_extra_features_contribution_across_channels_samples
+      adjusted_sum_scaled_baseline_contribution_across_samples + \
+      sum_scaled_media_contribution_across_channels_samples + \
+      sum_scaled_trend_contributions_across_samples + \
+      sum_scaled_seasonality_contributions_across_samples + \
+      sum_scaled_extra_features_contribution_across_channels_samples
   )
 
   # Calculate the media and baseline pct.
@@ -505,21 +506,21 @@ def create_segmented_contribution_df(
       baseline_contribution_pct)
   
   trend_contribution_pct = (
-    sum_scaled_trend_contributions_across_samples / 
-    adjusted_sum_scaled_prediction_across_samples
+      sum_scaled_trend_contributions_across_samples / 
+      adjusted_sum_scaled_prediction_across_samples
   )
   trend_contribution_pct = np.nan_to_num(trend_contribution_pct)
   
   seasonality_contribution_pct = (
-    sum_scaled_seasonality_contributions_across_samples / 
-    adjusted_sum_scaled_prediction_across_samples
+      sum_scaled_seasonality_contributions_across_samples / 
+      adjusted_sum_scaled_prediction_across_samples
   )
   seasonality_contribution_pct = np.nan_to_num(seasonality_contribution_pct)
 
 
   # If the channel_names is none, then create naming covention for the channels.
   if channel_names is None:
-    channel_names = media_mix_model.media_names
+      channel_names = media_mix_model.media_names
 
   # Create media/baseline contribution pct as dataframes.
   media_contribution_pct_by_channel_df = pd.DataFrame(
@@ -530,25 +531,27 @@ def create_segmented_contribution_df(
 
   baseline_contribution_pct_df = pd.DataFrame(
       np.concatenate([
-        baseline_contribution_pct.reshape(-1, 1),
-        trend_contribution_pct.reshape(-1, 1),
-        seasonality_contribution_pct.reshape(-1, 1),
+          baseline_contribution_pct.reshape(-1, 1),
+          trend_contribution_pct.reshape(-1, 1),
+          seasonality_contribution_pct.reshape(-1, 1),
       ], axis=1), columns=["baseline", 'trend', 'seasonality'])
-  contribution_pct_df = pd.merge(
-      media_contribution_pct_by_channel_df,
-      extra_features_contribution_pct_by_channel_df,
-      baseline_contribution_pct_df,
-      left_index=True,
-      right_index=True)
+  contribution_pct_df = pd.concat(
+      [
+          media_contribution_pct_by_channel_df,
+          extra_features_contribution_pct_by_channel_df,
+          baseline_contribution_pct_df,
+      ]
+  , join='inner', axis=1, ignore_index=False)
+
 
   # If there's target scaler then inverse transform the posterior prediction.
   posterior_pred = media_mix_model.trace["mu"]
   if target_scaler:
-    posterior_pred = target_scaler.inverse_transform(posterior_pred)
+      posterior_pred = target_scaler.inverse_transform(posterior_pred)
 
   # Take the sum of posterior predictions across geos.
   if posterior_pred.ndim > 2:
-    posterior_pred = posterior_pred.sum(axis=-1)
+      posterior_pred = posterior_pred.sum(axis=-1)
 
   # Take the average of the inverse transformed prediction across samples.
   posterior_pred_df = pd.DataFrame(
@@ -567,16 +570,16 @@ def create_segmented_contribution_df(
 
   # Create contribution by multiplying average prediction by media/baseline pct.
   for channel in [*channel_names, *extra_features_names]:
-    channel_contribution_col_name = "{}".format(channel)
-    channel_pct_col = "{}_percentage".format(channel)
-    contribution_df.loc[:, channel_contribution_col_name] = contribution_df[
-        channel_pct_col] * contribution_df["avg_prediction"]
-    contribution_df.loc[:, channel_contribution_col_name] = contribution_df[
-        channel_contribution_col_name].astype("float")
-    
+      channel_contribution_col_name = "{}".format(channel)
+      channel_pct_col = "{}_percentage".format(channel)
+      contribution_df.loc[:, channel_contribution_col_name] = contribution_df[
+          channel_pct_col] * contribution_df["avg_prediction"]
+      contribution_df.loc[:, channel_contribution_col_name] = contribution_df[
+          channel_contribution_col_name].astype("float")
+      
   for col in ['baseline', 'trend', 'seasonality']:
-    contribution_df.loc[:, f"{col}"] = contribution_df[
-        f"{col}_percentage"] * contribution_df["avg_prediction"]
+      contribution_df.loc[:, f"{col}"] = contribution_df[
+          f"{col}_percentage"] * contribution_df["avg_prediction"]
 
   period = np.arange(1, contribution_df.shape[0] + 1)
   contribution_df.loc[:, "period"] = period
@@ -1064,7 +1067,6 @@ def plot_media_channel_posteriors(
     channel_axis.set_title(axis_label)
     #channel_axis.legend(loc='upper left')
   fig.tight_layout()
-  plt.show()
   return fig
 
 
@@ -1624,6 +1626,7 @@ def plot_prior_and_posterior(
     return
 
   media_names = media_mix_model.media_names
+  extra_features_names = getattr(media_mix_model, 'extra_features_names', None)
   (features, geo_level_features, channel_level_features, seasonal_features,
     other_features) = _collect_features_for_prior_posterior_plot(
         media_mix_model, selected_features)
@@ -1794,7 +1797,8 @@ def plot_prior_and_posterior(
     if feature == models._COEF_EXTRA_FEATURES:
       for i_feature in range(media_mix_model.trace[feature].shape[1]):
         for j_geo in range(media_mix_model.n_geos):
-          subplot_title = f"{feature} feature {i_feature}, geo {j_geo}"
+          ch = extra_features_names[i_feature] if extra_features_names is not None else i_feature
+          subplot_title = f"{feature} feature {ch}, geo {j_geo}"
           if media_mix_model.n_geos == 1:
             posterior_samples = np.array(
                 media_mix_model.trace[feature][:, i_feature])

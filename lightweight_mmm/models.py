@@ -112,7 +112,7 @@ def _get_default_priors() -> Mapping[str, Prior]:
       _MODEL_SIGMA: dist.Gamma(concentration=1., rate=1.),
       _GAMMA_SEASONALITY: dist.Normal(loc=0., scale=1.),
       _WEEKDAY: dist.Normal(loc=0., scale=.5),
-      _COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=1.),
+      _COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.2),
       _COEF_SEASONALITY: dist.HalfNormal(scale=.5),
       _PARAM_DAY_OF_MONTH: dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),
       _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(0.5),
@@ -193,7 +193,7 @@ def _get_transform_prior_distributions() -> Mapping[str, Prior]:
     # Weak prior no saturataion
     _SATURATION: dist.Gamma(concentration=3.0, rate=2.0),#dist.HalfNormal(scale= 2.),
     _HALF_MAX_EFFECTIVE_CONCENTRATION: dist.Gamma(concentration= 1., rate= 1.),
-    _SLOPE: dist.Gamma(concentration= 1., rate= 1.)
+    _SLOPE: dist.Gamma(concentration=2., rate=2.)
   })
 
 def _get_transform_prior_hyperprior_distribution(
@@ -792,22 +792,35 @@ def _get_transform_param_samples(
   def get_sample(site_name: str, dist: numpyro.distributions.Distribution):
     # Assume matching distributions
     if site_name in custom_priors:
-      cls = dist.__class__
-      params = {}
-      
-      for p in cls.reparametrized_params:
-        vals = jnp.ones(n_media_channels) * getattr(dist, p)
-        for ch_idx, prior in custom_priors[site_name].items():
-          
-          vals = vals.at[ch_idx].set(getattr(prior, p))
-        params[p] = jnp.array(vals)
-          
+      # If specified custom prior is channel specific
+      if isinstance(custom_priors[site_name], dict):
+        cls = dist.__class__
+        params = {}
+
+        # For each hyperparameter in prior distribution
+        for p in cls.reparametrized_params:
+          # Set to same as base distribution by default
+          vals = jnp.ones(n_media_channels) * getattr(dist, p)
+          for ch_idx, prior in custom_priors[site_name].items():
+
+            # Assert all custom priors have same distr, different params
+            assert prior.__class__ == cls
+            
+            vals = vals.at[ch_idx].set(getattr(prior, p))
+          params[p] = jnp.array(vals)
+        dist = cls(**params)
+
+      # If specified custom prior applies to all channels
+      elif isinstance(custom_priors[site_name], numpyro.distributions.Distribution):
+        dist = custom_priors[site_name]
+      else: 
+        raise ValueError(
+          f'At site {site_name} Unrecognized Prior {custom_priors[site_name]} for default {dist}'
+        )
       # params = {
       #   p: jnp.ones(n_media_channels) * dist[p]
       #   for p in _get_transform_hyperprior_distributions()[site_name].keys()
       # }
-      dist = cls(**params)
-
 
     with numpyro.plate(name=f"{site_name}_plate",
                       size=n_media_channels,
@@ -1021,7 +1034,7 @@ def calculate_media_effects(
   # In case of daily data, number of lags should be 13*7.
   transform_kwargs = transform_kwargs or {}
   if transform_function in carryover_models:
-    transform_kwargs['number_lags'] = 13 if frequency == 52 else 30
+    transform_kwargs['number_lags'] = 13 if frequency == 52 else 60
 
   media_transformed = apply_media_transform_function(
     transform_function,
@@ -1031,11 +1044,12 @@ def calculate_media_effects(
     transform_kwargs,
   )
 
+  media_transformed = numpyro.deterministic(
+    name="media_transformed",
+    value=media_transformed
+  )
   if transform_function not in [transform_ensemble_multi]:
-    media_transformed = numpyro.deterministic(
-      name="media_transformed",
-      value=media_transformed
-    )
+
     with numpyro.plate(
         name="channel_media_plate",
         size=n_channels,

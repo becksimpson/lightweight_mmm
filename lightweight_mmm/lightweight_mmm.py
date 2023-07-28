@@ -251,6 +251,9 @@ class LightweightMMM:
     # Checking that the key is contained in custom_priors has already been done
     # at this point in the fit function.
     for prior_name in custom_priors:
+      if prior_name not in default_priors:
+        print(f'Ignoring Custom Prior `{prior_name}` does not appear in model')
+        continue
       if isinstance(custom_priors[prior_name], numbers.Number):
         custom_priors[prior_name] = default_priors[prior_name].__class__(
             custom_priors[prior_name])
