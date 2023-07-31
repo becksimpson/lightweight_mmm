@@ -297,7 +297,7 @@ def _carryover_convolve(data: jnp.ndarray,
 
 #Staticed out as used in jnp.arange (fails with dynamic)
 @functools.partial(jax.jit, static_argnames=("number_lags",))
-def carryover(data: jnp.ndarray,
+def carryover_original(data: jnp.ndarray,
               ad_effect_retention_rate: jnp.ndarray,
               peak_effect_delay: jnp.ndarray,
               number_lags: int = 30,
@@ -343,6 +343,25 @@ def carryover(data: jnp.ndarray,
       ).reshape(-1, 1)
     for i in range(data.shape[1])
   ], axis=1) / weights.sum(axis=0).reshape(1, -1)
+
+@functools.partial(jax.jit, static_argnames=('number_lags',))
+def carryover(
+  data: jnp.ndarray,
+  ad_effect_retention_rate: jnp.ndarray,
+  peak_effect_delay: jnp.ndarray,
+  number_lags: int = 60) -> jnp.ndarray:
+
+  lags_arange = jnp.expand_dims(jnp.arange(number_lags, dtype=jnp.float32),
+                              axis=-1)
+  weights = ad_effect_retention_rate**(jnp.abs(lags_arange - peak_effect_delay))
+  weights = weights / weights.sum(axis=0)
+  window = jnp.concatenate([jnp.zeros((number_lags - 1, data.shape[1])), weights])
+  return jax.scipy.signal.fftconvolve(
+      data,
+      window,
+      mode='same',
+      axes=0
+  ).clip(min=0.0)
 
   #return jnp.
 

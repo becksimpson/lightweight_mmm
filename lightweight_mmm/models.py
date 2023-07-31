@@ -106,13 +106,14 @@ def _get_default_priors() -> Mapping[str, Prior]:
   # priors from a function.
   return immutabledict.immutabledict({
       _INTERCEPT: dist.HalfNormal(scale=2.0),
-      _COEF_TREND: dist.Normal(loc=0., scale=1.),
+      _COEF_TREND: dist.Normal(loc=0., scale=0.01),
       _EXPO_TREND: dist.Uniform(low=0.5, high=1.5),
       _SIGMA: dist.Gamma(concentration=1., rate=1.),
       _MODEL_SIGMA: dist.Gamma(concentration=1., rate=1.),
       _GAMMA_SEASONALITY: dist.Normal(loc=0., scale=1.),
       _WEEKDAY: dist.Normal(loc=0., scale=.5),
-      _COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.2),
+      #_COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.2),
+      _COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.2),
       _COEF_SEASONALITY: dist.HalfNormal(scale=.5),
       _PARAM_DAY_OF_MONTH: dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),
       _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(0.5),
@@ -1168,7 +1169,7 @@ def calculate_media_effects(
         _MODEL_WEIGHTS,
         fn=default_priors[_MODEL_WEIGHTS]
       )
-    weights = weights / weights.sum()
+    #weights = weights / weights.sum()
 
     #weights = weights / weights.sum()
     channel_einsum = "mtc, m -> tc"
