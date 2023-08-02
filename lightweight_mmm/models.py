@@ -144,8 +144,8 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     _SLOPE: immutabledict.immutabledict({
         #'concentration': dist.Uniform(1.5, 3.),
         #'rate': 2.0 # Fixed to contrain hyperparameter distribution to appropriate range
-        'concentration': dist.Uniform(low=6.0, high=8.0),
-        'rate': 1.0 / 0.2
+        'concentration': dist.Uniform(low=4.0, high=6.0),
+        'rate': 1.0 / 0.15
     }),
     # Half point most effective, gamma
     # Create range 0.5 -> 2 (Half --> double mean contribution)
@@ -193,8 +193,8 @@ def _get_transform_prior_distributions() -> Mapping[str, Prior]:
     _EXPONENT: dist.Beta(concentration1=9., concentration0=1.),
     # Weak prior no saturataion
     _SATURATION: dist.Gamma(concentration=3.0, rate=2.0),#dist.HalfNormal(scale= 2.),
-    _HALF_MAX_EFFECTIVE_CONCENTRATION: dist.Gamma(concentration= 1., rate= 1.),
-    _SLOPE: dist.Gamma(concentration=2., rate=2.)
+    _HALF_MAX_EFFECTIVE_CONCENTRATION: dist.Gamma(concentration= 1.5, rate= 2.),
+    _SLOPE: dist.Gamma(concentration=1.5, rate=2.)
   })
 
 def _get_transform_prior_hyperprior_distribution(
