@@ -753,6 +753,20 @@ def _get_transform_function_prior_names(
 
   return prior_list
 
+def _generate_extra_features_custom_priors(default_priors, custom_priors, n_extra_features):
+  dp = default_priors[_COEF_EXTRA_FEATURES]
+  cls = dp.__class__
+
+  dt = {}
+  for p in cls.reparametrized_params:
+    # Set to same as base distribution by default
+    vals = jnp.ones(n_extra_features) * getattr(dp, p)
+    for i, v in custom_priors.get(_COEF_EXTRA_FEATURES, {}).get(p, {}).items():
+      vals = vals.at[i].set(v)
+    dt[p] = vals
+
+  return cls(**dt)
+
 
 def _get_transform_default_priors(
     transform_hyperprior,
@@ -996,8 +1010,14 @@ def calculate_extra_features_effects(
                              sizes=extra_features_plates_shape):
       coef_extra_features = numpyro.sample(
           name=_COEF_EXTRA_FEATURES,
-          fn=custom_priors.get(
-              _COEF_EXTRA_FEATURES, default_priors[_COEF_EXTRA_FEATURES]))
+          fn = _generate_extra_features_custom_priors(
+                  default_priors,
+                  custom_priors,
+                  extra_features.shape[-1]
+          )
+          #fn=custom_priors.get(
+          #    _COEF_EXTRA_FEATURES, default_priors[_COEF_EXTRA_FEATURES]))
+      )
     extra_features_effect = jnp.einsum(extra_features_einsum,
                                        extra_features,
                                        coef_extra_features)
@@ -1169,6 +1189,7 @@ def calculate_media_effects(
         _MODEL_WEIGHTS,
         fn=default_priors[_MODEL_WEIGHTS]
       )
+
     #weights = weights / weights.sum()
 
     #weights = weights / weights.sum()
@@ -1177,6 +1198,11 @@ def calculate_media_effects(
       name='channel_contribution',
       value=jnp.einsum(channel_einsum, media_contribution, weights)
     )
+
+    # channel_contribution = numpyro.deterministic(
+    #   name='channel_contribution',
+    #   value= media_contribution.mean(axis=0)
+    # )
 
     # with numpyro.plate(name=f"{_MODEL_SIGMA}_geo_plate", size=n_geos):
     #   with numpyro.plate(name=f'{_MODEL_SIGMA}_plate', size=n_models):
@@ -1269,11 +1295,7 @@ def media_mix_model(
         name=_SIGMA,
         fn=custom_priors.get(_SIGMA, default_priors[_SIGMA]))
 
-  with numpyro.plate(name=f"{_DEGREES_FREEDOM}_plate", size=n_geos):
-    degrees_freedom = numpyro.sample(
-      name=_DEGREES_FREEDOM,
-      fn=custom_priors.get(_DEGREES_FREEDOM, default_priors[_DEGREES_FREEDOM])
-    )
+
 
 
   seasonal_effects = calculate_seasonal_effects(
@@ -1288,11 +1310,14 @@ def media_mix_model(
     media_data,
     custom_priors
   )
-  extra_features_effects = calculate_extra_features_effects(
-    extra_features,
-    custom_priors,
-    geo_shape
-  )
+  if extra_features is None:
+    extra_features_effects = 0
+  else:
+    extra_features_effects = calculate_extra_features_effects(
+      extra_features,
+      custom_priors,
+      geo_shape
+    )
 
   media_effects = calculate_media_effects(
     media_data,
@@ -1352,12 +1377,17 @@ def media_mix_model(
 
   mu = numpyro.deterministic(name="mu", value=prediction)
 
+  # with numpyro.plate(name=f"{_DEGREES_FREEDOM}_plate", size=n_geos):
+  #   degrees_freedom = numpyro.sample(
+  #     name=_DEGREES_FREEDOM,
+  #     fn=custom_priors.get(_DEGREES_FREEDOM, default_priors[_DEGREES_FREEDOM])
+  #   )
 
   # A studentT distribution is more resilient to outliers, than a normal distr
   numpyro.sample(
     name="target",
-    fn=dist.StudentT(degrees_freedom, loc=mu, scale=sigma),
-    #fn=dist.Normal(loc=mu, scale=sigma),
+    #fn=dist.StudentT(degrees_freedom, loc=mu, scale=sigma),
+    fn=dist.Normal(loc=mu, scale=sigma),
     obs=target_data
   )
 

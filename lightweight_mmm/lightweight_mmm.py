@@ -56,7 +56,7 @@ from lightweight_mmm import models
 from lightweight_mmm import preprocessing
 from lightweight_mmm import utils
 from lightweight_mmm import media_transforms
-from lightweight_mmm.models import _NAMES_TO_MODEL_TRANSFORMS
+from lightweight_mmm.models import _NAMES_TO_MODEL_TRANSFORMS, _COEF_EXTRA_FEATURES
 Prior = Union[
     dist.Distribution,
     Dict[str, float],
@@ -252,6 +252,8 @@ class LightweightMMM:
     # Checking that the key is contained in custom_priors has already been done
     # at this point in the fit function.
     for prior_name in custom_priors:
+      if prior_name in [_COEF_EXTRA_FEATURES]:
+        continue
       if prior_name not in default_priors:
         print(f'Ignoring Custom Prior `{prior_name}` does not appear in model')
         continue

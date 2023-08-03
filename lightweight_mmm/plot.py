@@ -429,7 +429,7 @@ def create_segmented_contribution_df(
       percentage & volume.
   """
   channel_names = media_mix_model.media_names
-  extra_features_names = media_mix_model.extra_features_names
+  extra_features_names = media_mix_model.extra_features_names or []
 
   # Create media contribution matrix
   scaled_media_contribution = _calculate_media_contribution(media_mix_model)
@@ -444,12 +444,17 @@ def create_segmented_contribution_df(
   seasonality_contributions = media_mix_model.trace["total_seasonality"]
   trend_contributions = media_mix_model.trace['total_trend']
   
-  scaled_extra_features_contribution = _calculate_extra_features_contribution(media_mix_model)
-  sum_scaled_extra_features_contribution_across_samples = scaled_extra_features_contribution.sum(
-      axis=0)
-  # Aggregate media channel contribution across channels.
-  sum_scaled_extra_features_contribution_across_channels = scaled_extra_features_contribution.sum(
-      axis=2)
+  if media_mix_model._extra_features is not None:
+    scaled_extra_features_contribution = _calculate_extra_features_contribution(media_mix_model)
+    sum_scaled_extra_features_contribution_across_samples = scaled_extra_features_contribution.sum(
+        axis=0)
+    # Aggregate media channel contribution across channels.
+    sum_scaled_extra_features_contribution_across_channels = scaled_extra_features_contribution.sum(
+        axis=2)
+  else:
+    scaled_extra_features_contribution = 0
+    sum_scaled_extra_features_contribution_across_samples = 0
+    sum_scaled_extra_features_contribution_across_channels = 0
 
   # Calculate the baseline contribution.
   # Scaled prediction - sum of scaled contribution across channels.
@@ -464,7 +469,7 @@ def create_segmented_contribution_df(
       axis=0)
   sum_scaled_extra_features_contribution_across_channels_samples = sum_scaled_extra_features_contribution_across_channels.sum(
       axis=0
-  )
+  ) if media_mix_model._extra_features is not None else 0
   sum_scaled_baseline_contribution_across_samples = baseline_contribution.sum(
       axis=0)
   sum_scaled_trend_contributions_across_samples = trend_contributions.sum(axis=0)
@@ -492,12 +497,13 @@ def create_segmented_contribution_df(
   media_contribution_pct_by_channel = np.nan_to_num(
       media_contribution_pct_by_channel)
   
-  extra_features_contribution_pct_by_channel = (
-      sum_scaled_extra_features_contribution_across_samples /
-      adjusted_sum_scaled_prediction_across_samples.reshape(-1, 1))
-  # Adjust media pct contribution if the value is nan
-  extra_features_contribution_pct_by_channel = np.nan_to_num(
-      extra_features_contribution_pct_by_channel)
+  if media_mix_model._extra_features is not None:
+    extra_features_contribution_pct_by_channel = (
+        sum_scaled_extra_features_contribution_across_samples /
+        adjusted_sum_scaled_prediction_across_samples.reshape(-1, 1))
+    # Adjust media pct contribution if the value is nan
+    extra_features_contribution_pct_by_channel = np.nan_to_num(
+        extra_features_contribution_pct_by_channel)
 
 
   baseline_contribution_pct = adjusted_sum_scaled_baseline_contribution_across_samples / adjusted_sum_scaled_prediction_across_samples
@@ -525,9 +531,11 @@ def create_segmented_contribution_df(
   # Create media/baseline contribution pct as dataframes.
   media_contribution_pct_by_channel_df = pd.DataFrame(
       media_contribution_pct_by_channel, columns=channel_names)
-  extra_features_contribution_pct_by_channel_df = pd.DataFrame(
-      extra_features_contribution_pct_by_channel, columns=extra_features_names
-  )
+  
+  if media_mix_model._extra_features is not None:
+    extra_features_contribution_pct_by_channel_df = pd.DataFrame(
+        extra_features_contribution_pct_by_channel, columns=extra_features_names
+    )
 
   baseline_contribution_pct_df = pd.DataFrame(
       np.concatenate([
@@ -538,7 +546,11 @@ def create_segmented_contribution_df(
   contribution_pct_df = pd.concat(
       [
           media_contribution_pct_by_channel_df,
-          extra_features_contribution_pct_by_channel_df,
+          *(
+            [extra_features_contribution_pct_by_channel_df]
+            if media_mix_model._extra_features is not None
+            else []
+          ),
           baseline_contribution_pct_df,
       ]
   , join='inner', axis=1, ignore_index=False)
@@ -1683,6 +1695,8 @@ def plot_prior_and_posterior(
     # Hyperpriors don't have custom priors
     if feature in media_transform_hyperpriors.keys():
       prior_distribution = media_transform_hyperpriors[feature]
+    elif feature == models._COEF_EXTRA_FEATURES:
+      prior_distribution = None
     # Custom Priors take precedence
     elif feature in media_mix_model.custom_priors:
       prior_distribution = media_mix_model.custom_priors[feature]
@@ -1765,6 +1779,7 @@ def plot_prior_and_posterior(
       #raise ValueError(f"{feature} has no prior specified.")
       print(f'{feature} not found to have fixed prior distribution')
       continue
+
     kwargs_for_helper_function["prior_distribution"] = prior_distribution
 
     if feature in [models._MEDIA_TRANSFORM_WEIGHTS, models._MODEL_WEIGHTS]:
@@ -1796,6 +1811,14 @@ def plot_prior_and_posterior(
 
     if feature == models._COEF_EXTRA_FEATURES:
       for i_feature in range(media_mix_model.trace[feature].shape[1]):
+        prior_distribution = default_priors[models._COEF_EXTRA_FEATURES]
+        dd = {}
+        for p, d in media_mix_model.custom_priors.get(models._COEF_EXTRA_FEATURES, {}).items():
+          for idx, v in d.items():
+            if idx == i_feature:
+              dd[p] = v
+        if dd:
+          prior_distribution = prior_distribution.__class__(**dd)
         for j_geo in range(media_mix_model.n_geos):
           ch = extra_features_names[i_feature] if extra_features_names is not None else i_feature
           subplot_title = f"{feature} feature {ch}, geo {j_geo}"
@@ -1810,7 +1833,10 @@ def plot_prior_and_posterior(
                 posterior_samples=posterior_samples,
                 subplot_title=subplot_title,
                 i_ax=i_ax,
-                **kwargs_for_helper_function)
+                **{
+                  **kwargs_for_helper_function,
+                  'prior_distribution':prior_distribution,
+                })
 
     if feature in geo_level_features:
       for i_geo in range(media_mix_model.n_geos):
