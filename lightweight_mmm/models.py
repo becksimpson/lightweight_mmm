@@ -1219,7 +1219,7 @@ def calculate_media_effects(
     )
 
     # Division by n_models to make weight of ensemble model 50%
-    numpyro.sample(
+    _ = numpyro.sample(
       name='model_target',
       fn=dist.Normal(
         loc=model_predictions, scale=sigma

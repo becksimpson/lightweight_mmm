@@ -182,10 +182,17 @@ class LightweightMMM:
       self._prior_names = self._prior_names.union(
         [models._MODEL_WEIGHTS]
       )
+      self.model_names = [
+        fn_adstock.__name__ + '_' + fn_sat.__name__
+        for fn_adstock in models._ENSEMBLE_ADSTOCK_TRANSFORMS.values()
+        for fn_sat in models._ENSEMBLE_SATURATION_TRANSFORMS.values()
+      ]
+
     if self.model_name == 'ensemble_avg':
       self._prior_names = self._prior_names.union(
         [models._MEDIA_TRANSFORM_WEIGHTS]
       )
+
 
   def __eq__(self, other: Any) -> bool:
     """Equality method for LightweightMMMM.
