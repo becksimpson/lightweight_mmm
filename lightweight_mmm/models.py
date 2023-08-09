@@ -105,11 +105,11 @@ def _get_default_priors() -> Mapping[str, Prior]:
   # Since JAX cannot be called before absl.app.run in tests we get default
   # priors from a function.
   return immutabledict.immutabledict({
-      _INTERCEPT: dist.HalfNormal(scale=2.0),
-      _COEF_TREND: dist.Normal(loc=0., scale=0.01),
+      _INTERCEPT: dist.HalfNormal(scale=0.5),
+      _COEF_TREND: dist.HalfNormal(scale=0.01),# dist.Normal(loc=0., scale=0.01),
       _EXPO_TREND: dist.Uniform(low=0.5, high=1.5),
       _SIGMA: dist.Gamma(concentration=1., rate=1.),
-      _MODEL_SIGMA: dist.Gamma(concentration=1., rate=1.),
+      #_MODEL_SIGMA: dist.Gamma(concentration=1., rate=1.),
       _GAMMA_SEASONALITY: dist.Normal(loc=0., scale=1.),
       _WEEKDAY: dist.Normal(loc=0., scale=.5),
       #_COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.2),
@@ -119,7 +119,7 @@ def _get_default_priors() -> Mapping[str, Prior]:
       _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(0.5),
       _MODEL_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
       _MEDIA_TRANSFORM_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
-      _DEGREES_FREEDOM: dist.Gamma(concentration=25., rate=0.5),
+      #_DEGREES_FREEDOM: dist.Gamma(concentration=25., rate=0.5),
   })
 
 
@@ -127,7 +127,7 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
   return immutabledict.immutabledict({
     # For Beta Distribution - high focus on minimal saturation
     _EXPONENT: immutabledict.immutabledict({
-        'concentration': dist.TruncatedNormal(0., 3., low=0.0, high=8.0)
+        'concentration': dist.TruncatedNormal(0., 5., low=0.0, high=8.0)
         #'concentration': dist.TruncatedCauchy(0., 2., low=0.0, high=8.0)
     }),
     # Adstock lag_weight (Beta), [0.0, 1.0], higher, more carryover
@@ -144,7 +144,7 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     _SLOPE: immutabledict.immutabledict({
         #'concentration': dist.Uniform(1.5, 3.),
         #'rate': 2.0 # Fixed to contrain hyperparameter distribution to appropriate range
-        'concentration': dist.Uniform(low=4.0, high=6.0),
+        'concentration': dist.Uniform(low=2.0, high=16.0),
         'rate': 1.0 / 0.15
     }),
     # Half point most effective, gamma
@@ -152,7 +152,7 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     _HALF_MAX_EFFECTIVE_CONCENTRATION: immutabledict.immutabledict({
       #'concentration': dist.Uniform(2., 5.),
       #'rate': 2.0
-      'concentration': dist.Uniform(low=4., high=6.0),
+      'concentration': dist.Uniform(low=10., high=20.0),
       'rate': 1 / 0.15
     }),
     # Retention rate of advertisement Beta
@@ -169,7 +169,9 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     }),
   })
 
-def _generate_media_prior_distribution(mean: float, alpha:float=1.5, mode:str='beta'):
+
+
+def _generate_media_prior_distribution(mean: float, alpha:float=1.5, mode:str='halfnormal'):
   """ Generate beta distributions that mirror half normals except low 0 weighting. """
   if mode == 'beta':
     beta = alpha * (mean - 1) / mean * -1
@@ -190,12 +192,13 @@ def _get_transform_prior_distributions() -> Mapping[str, Prior]:
     _PEAK_EFFECT_DELAY:dist.HalfNormal(scale= 2.),
 
     # Saturation effects
-    _EXPONENT: dist.Beta(concentration1=9., concentration0=1.),
+    _EXPONENT: dist.Beta(concentration1=5., concentration0=1.),
     # Weak prior no saturataion
     _SATURATION: dist.Gamma(concentration=3.0, rate=2.0),#dist.HalfNormal(scale= 2.),
     _HALF_MAX_EFFECTIVE_CONCENTRATION: dist.Gamma(concentration= 1.5, rate= 2.),
     _SLOPE: dist.Gamma(concentration=1.5, rate=2.)
   })
+
 
 def _get_transform_prior_hyperprior_distribution(
     prior_name: str
@@ -229,7 +232,7 @@ _ENSEMBLE_ADSTOCK_TRANSFORMS = immutabledict.immutabledict({
   (_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY): media_transforms.carryover
 })
 _ENSEMBLE_SATURATION_TRANSFORMS = immutabledict.immutabledict({
-  #(_EXPONENT,): media_transforms.apply_exponent_safe,
+  (_EXPONENT,): media_transforms.apply_exponent_safe,
   (_SATURATION,): media_transforms.logistic_saturation,
   (_HALF_MAX_EFFECTIVE_CONCENTRATION, _SLOPE): media_transforms.hill,
 })
@@ -920,6 +923,10 @@ def calculate_seasonal_effects(
     )
     dom_series = jbeta.pdf(doms / 32, *dom_param) * dom_multiplier# (1.0 + dom_multiplier)
     
+    dom_series = numpyro.deterministic(
+      name = 'dom_seasonality',
+      value = dom_series - dom_series.min()
+    )
   # Day of Week Seasonality
   if weekday_seasonality:
     with numpyro.plate(name=f"{_WEEKDAY}_plate", size=6):
@@ -927,7 +934,12 @@ def calculate_seasonal_effects(
           name=_WEEKDAY,
           fn=custom_priors.get(_WEEKDAY, default_priors[_WEEKDAY]))
     weekday = jnp.concatenate(arrays=[weekday, jnp.array([0])], axis=0)
-    weekday_series = weekday[jnp.arange(data_size) % 7]
+    weekday = weekday - weekday.min()
+
+    weekday_series = numpyro.deterministic(
+      name='weekday_seasonality',
+      value=weekday[jnp.arange(data_size) % 7]
+    )
 
   # Extensions to account for n_geos.
   coef_seasonality = 1
@@ -943,9 +955,15 @@ def calculate_seasonal_effects(
           fn=custom_priors.get(
               _COEF_SEASONALITY, default_priors[_COEF_SEASONALITY]))
   
+
   total_seasonality = (
     seasonality * coef_seasonality
   )
+  total_seasonality = numpyro.deterministic(
+    name='year_seasonality',
+    value=total_seasonality - total_seasonality.min()
+  )
+
   if doms is not None:
     total_seasonality += dom_series
   if weekday_seasonality:
@@ -1094,6 +1112,16 @@ def calculate_media_effects(
               #fn=dist.HalfNormal(scale=coef_media * normalisation_factor)
           )
 
+    # Used in model evaluation plots to see channel contribution over time
+    media_einsum = 'tc, c -> tc'
+    if media_data.ndim == 3:  # For geo model's case
+      media_einsum = "tcg, cg -> tcg"  # t = time, c = channel, g = geo
+    channel_contribution = numpyro.deterministic(
+      name = 'channel_contribution',
+      value = jnp.einsum(media_einsum, media_transformed, coef_media)
+    )
+
+
     # For national model's case
     media_einsum = "tc, c -> t"  # t = time, c = channel
     if media_data.ndim == 3:  # For geo model's case
@@ -1189,6 +1217,8 @@ def calculate_media_effects(
         _MODEL_WEIGHTS,
         fn=default_priors[_MODEL_WEIGHTS]
       )
+    # The max credit given to any model is 50%.
+    weights = weights / (n_models / 2)
 
     #weights = weights / weights.sum()
 

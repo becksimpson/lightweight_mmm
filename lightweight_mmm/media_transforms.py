@@ -357,11 +357,11 @@ def carryover(
   weights = weights / weights.sum(axis=0)
   window = jnp.concatenate([jnp.zeros((number_lags - 1, data.shape[1])), weights])
   return jax.scipy.signal.fftconvolve(
-      data,
+      jnp.concatenate([jnp.ones((30, data.shape[1])) * data[0, :], data], axis=0),
       window,
       mode='same',
       axes=0
-  ).clip(min=0.0)
+  ).clip(min=0.0)[30:, :]
 
   #return jnp.
 
