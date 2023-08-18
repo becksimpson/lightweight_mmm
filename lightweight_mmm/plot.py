@@ -1573,9 +1573,11 @@ def _collect_features_for_prior_posterior_plot(
       models._AD_EFFECT_RETENTION_RATE,
       models._EXPONENT,
       models._HALF_MAX_EFFECTIVE_CONCENTRATION,
+      models._HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED,
       models._LAG_WEIGHT,
       models._PEAK_EFFECT_DELAY,
       models._SLOPE,
+      models._SLOPE_CONSTRAINED,
       models._SATURATION,
       "channel_coef_media",
       "coef_media",
@@ -1712,7 +1714,7 @@ def plot_prior_and_posterior(
           feature_hyperpriors = models._get_transform_hyperprior_distributions()[feature]
           prior_cls = models._get_transform_prior_distributions()[feature].__class__
 
-          if prior_cls != numpyro.distributions.Beta:
+          if (prior_cls != numpyro.distributions.Beta) or ((feature+'_concentration') not in media_mix_model.trace):
             mean_hyperprior_posterior_samples = {
               hyp: (
                 val if not isinstance(val, numpyro.distributions.Distribution)
@@ -1753,7 +1755,7 @@ def plot_prior_and_posterior(
         feature_hyperpriors = models._get_transform_hyperprior_distributions()[feature]
         prior_cls = models._get_transform_prior_distributions()[feature].__class__
 
-        if prior_cls != numpyro.distributions.Beta:
+        if prior_cls != numpyro.distributions.Beta or ((feature+'_concentration') not in media_mix_model.trace):
           mean_hyperprior_posterior_samples = {
             hyp: (
               val if not isinstance(val, numpyro.distributions.Distribution)

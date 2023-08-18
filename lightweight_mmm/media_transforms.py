@@ -21,6 +21,7 @@ import jax
 import jax.numpy as jnp
 
 MAX_DEGREES_SEASONALITY = 4
+RETENTION_LIMIT = 0.99
 
 
 #@functools.partial(jax.jit, static_argnums=[0, 1])
@@ -151,6 +152,8 @@ def adstock(data: jnp.ndarray,
   Returns:
     The adstock output of the input array.
   """
+  #lag_weight = jnp.clip(lag_weight, None, RETENTION_LIMIT)
+  lag_weight = lag_weight * RETENTION_LIMIT
 
   def adstock_internal(prev_adstock: jnp.ndarray,
                        data: jnp.ndarray,
@@ -196,6 +199,52 @@ def logistic_saturation(
   )
   #return d /  ((1 - jnp.exp(-saturation )) / (1 + jnp.exp(-saturation)))#/ d.sum(axis=0) * data.sum(axis=0)
 
+
+@functools.partial(jax.jit, static_argnames=("hill_normalise",))
+def hill_constrained(data: jnp.ndarray,
+         half_max_effective_concentration_constrained: jnp.ndarray,
+         slope_constrained: jnp.ndarray,
+         hill_normalise: bool = False,
+  ) -> jnp.ndarray:
+  """Calculates the hill function for a given array of values.
+
+  Refer to the following link for detailed information on this equation:
+    https://en.wikipedia.org/wiki/Hill_equation_(biochemistry)
+
+  Args:
+    data: Input data.
+    half_max_effective_concentration: ec50 value for the hill function.
+    slope: Slope of the hill function.
+
+  Returns:
+    The hill values for the respective input data.
+  """
+  # Range 0.3 --> 1.0
+  half_max_effective_concentration = half_max_effective_concentration_constrained * 0.7 + 0.3 #
+  # Range 0.5 --> 3.0
+  slope = slope_constrained * 2.7 + 0.3
+
+  # slope = jnp.clip(slope, a_min=0.5, a_max=3.0)
+  # half_max_effective_concentration = jnp.clip(half_max_effective_concentration, a_min=0.3, a_max=1.0)
+  #hill_normalise = True
+  save_transform = apply_exponent_safe(
+      data=data / half_max_effective_concentration, exponent=-slope)
+  hill_media = jnp.where(save_transform == 0, x=0, y=1. / (1 + save_transform))
+
+  #return hill_media #* (2 * half_max_effective_concentration)
+  # Normalisation keeps linear scaling at half_max_effective_concentration point
+  # if hill_normalise:
+  #   return hill_media * (2 * half_max_effective_concentration)
+  # else:
+  #   return hill_media
+  #return hill_media
+  return jax.lax.cond(
+    hill_normalise,
+    lambda hill_media: hill_media * (2 * half_max_effective_concentration),
+    lambda hill_media: hill_media,
+    operand=hill_media
+  )
+
 #@jax.jit
 @functools.partial(jax.jit, static_argnames=("hill_normalise",))
 def hill(data: jnp.ndarray,
@@ -216,6 +265,8 @@ def hill(data: jnp.ndarray,
   Returns:
     The hill values for the respective input data.
   """
+  # slope = jnp.clip(slope, a_min=0.5, a_max=3.0)
+  # half_max_effective_concentration = jnp.clip(half_max_effective_concentration, a_min=0.3, a_max=1.0)
   #hill_normalise = True
   save_transform = apply_exponent_safe(
       data=data / half_max_effective_concentration, exponent=-slope)
@@ -323,7 +374,7 @@ def carryover_original(data: jnp.ndarray,
   #number_lags = 60
   lags_arange = jnp.expand_dims(jnp.arange(number_lags, dtype=jnp.float32),
                                 axis=-1)
-  weights = ad_effect_retention_rate**(jnp.abs(lags_arange - peak_effect_delay))
+  weights = ad_effect_retention_rate**((lags_arange - peak_effect_delay)**2)
 
   zeros = jnp.zeros((number_lags - 1, data.shape[1]))
   window = jnp.concatenate([zeros, weights])
@@ -349,19 +400,28 @@ def carryover(
   data: jnp.ndarray,
   ad_effect_retention_rate: jnp.ndarray,
   peak_effect_delay: jnp.ndarray,
-  number_lags: int = 60) -> jnp.ndarray:
+  number_lags: int = 100) -> jnp.ndarray:
+
+  #ad_effect_retention_rate = jnp.clip(ad_effect_retention_rate, None, RETENTION_LIMIT)
+  ad_effect_retention_rate = ad_effect_retention_rate * RETENTION_LIMIT
 
   lags_arange = jnp.expand_dims(jnp.arange(number_lags, dtype=jnp.float32),
                               axis=-1)
-  weights = ad_effect_retention_rate**(jnp.abs(lags_arange - peak_effect_delay))
-  weights = weights / weights.sum(axis=0)
+  weights = ad_effect_retention_rate**((lags_arange - peak_effect_delay) ** 2)
+  #weights = weights / weights.sum(axis=0)
   window = jnp.concatenate([jnp.zeros((number_lags - 1, data.shape[1])), weights])
+  # Create accurate normaliser
+  # ws = jax.scipy.signal.fftconvolve(
+  #   weights,
+  #   jnp.ones(data.shape),
+  #   axes=0
+  # )[:data.shape[0]]
   return jax.scipy.signal.fftconvolve(
-      jnp.concatenate([jnp.ones((30, data.shape[1])) * data[0, :], data], axis=0),
+      data,
       window,
       mode='same',
       axes=0
-  ).clip(min=0.0)[30:, :]
+  ).clip(min=0.0) / weights.sum(axis=0).reshape(1, -1) #ws
 
   #return jnp.
 

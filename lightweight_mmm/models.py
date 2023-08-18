@@ -97,6 +97,8 @@ _SLOPE = "slope"
 _AD_EFFECT_RETENTION_RATE = "ad_effect_retention_rate"
 _PEAK_EFFECT_DELAY = "peak_effect_delay"
 _SATURATION = 'saturation'
+_HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED = 'half_max_effective_concentraton_constrained'
+_SLOPE_CONSTRAINED = "slope_constrained"
 
 
 GEO_ONLY_PRIORS = frozenset((_COEF_SEASONALITY,))
@@ -105,29 +107,75 @@ def _get_default_priors() -> Mapping[str, Prior]:
   # Since JAX cannot be called before absl.app.run in tests we get default
   # priors from a function.
   return immutabledict.immutabledict({
-      _INTERCEPT: dist.HalfNormal(scale=0.5),
-      _COEF_TREND: dist.HalfNormal(scale=0.01),# dist.Normal(loc=0., scale=0.01),
+      _INTERCEPT: dist.HalfNormal(scale=0.1),
+      _COEF_TREND: dist.HalfNormal(scale=0.001),# dist.Normal(loc=0., scale=0.01),
       _EXPO_TREND: dist.Uniform(low=0.5, high=1.5),
       _SIGMA: dist.Gamma(concentration=1., rate=1.),
-      #_MODEL_SIGMA: dist.Gamma(concentration=1., rate=1.),
-      _GAMMA_SEASONALITY: dist.Normal(loc=0., scale=1.),
-      _WEEKDAY: dist.Normal(loc=0., scale=.5),
+      _MODEL_SIGMA: dist.Gamma(concentration=1., rate=1.),
+      _GAMMA_SEASONALITY: dist.Normal(loc=0., scale=.05),
+      _WEEKDAY: dist.Normal(loc=0., scale=.1),
       #_COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.2),
       _COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.2),
       _COEF_SEASONALITY: dist.HalfNormal(scale=.5),
       _PARAM_DAY_OF_MONTH: dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),
-      _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(0.5),
+      _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(0.1),
       _MODEL_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
       _MEDIA_TRANSFORM_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
       #_DEGREES_FREEDOM: dist.Gamma(concentration=25., rate=0.5),
   })
 
 
+# def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union[float, Prior]]]:
+#   return immutabledict.immutabledict({
+#     # For Beta Distribution - high focus on minimal saturation
+#     _EXPONENT: immutabledict.immutabledict({
+#         'concentration': dist.TruncatedNormal(0., 5., low=0.0, high=8.0)
+#         #'concentration': dist.TruncatedCauchy(0., 2., low=0.0, high=8.0)
+#     }),
+#     # Adstock lag_weight (Beta), [0.0, 1.0], higher, more carryover
+#     _LAG_WEIGHT: immutabledict.immutabledict({
+#         #'concentration': dist.Uniform(0., 8.),
+#         'concentration': dist.TruncatedNormal(4.0, 2.0, low=0.0, high=8.0)
+#     }),
+#     # Carryover delay to peak (halfnormal)
+#     _PEAK_EFFECT_DELAY: immutabledict.immutabledict({
+#         # Median 1.6, <1 27%, longtail
+#         'scale': dist.LogNormal(0.5, 0.8)
+#     }),
+#     # hill saturation (gamma) create range 0.1 -> 2/3ish, 0.1 -> 1.0 peak
+#     _SLOPE: immutabledict.immutabledict({
+#         #'concentration': dist.Uniform(1.5, 3.),
+#         #'rate': 2.0 # Fixed to contrain hyperparameter distribution to appropriate range
+#         'concentration': dist.Uniform(low=2.0, high=16.0),
+#         'rate': 1.0 / 0.15
+#     }),
+#     # Half point most effective, gamma
+#     # Create range 0.5 -> 2 (Half --> double mean contribution)
+#     _HALF_MAX_EFFECTIVE_CONCENTRATION: immutabledict.immutabledict({
+#       #'concentration': dist.Uniform(2., 5.),
+#       #'rate': 2.0
+#       'concentration': dist.Uniform(low=10., high=20.0),
+#       'rate': 1 / 0.15
+#     }),
+#     # Retention rate of advertisement Beta
+#     _AD_EFFECT_RETENTION_RATE: immutabledict.immutabledict({
+#         #'concentration': dist.Uniform(0., 8.),
+#         'concentration': dist.TruncatedNormal(4.0, 2.0, low=0.0, high=8.0)
+#     }),
+#     # Saturation for logistic saturation
+#     _SATURATION: immutabledict.immutabledict({
+#         # 1.34 mean --> HalfNormal(1.34)
+#         #'scale': dist.LogNormal(loc=0.3, scale=0.3)
+#         'concentration': dist.Uniform(low=1.5, high=4.0),
+#         'rate': 1.0 / 0.5
+#     }),
+#   })
+
 def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union[float, Prior]]]:
   return immutabledict.immutabledict({
     # For Beta Distribution - high focus on minimal saturation
     _EXPONENT: immutabledict.immutabledict({
-        'concentration': dist.TruncatedNormal(0., 5., low=0.0, high=8.0)
+        'concentration': dist.TruncatedNormal(0., 3., low=0.0, high=8.0)
         #'concentration': dist.TruncatedCauchy(0., 2., low=0.0, high=8.0)
     }),
     # Adstock lag_weight (Beta), [0.0, 1.0], higher, more carryover
@@ -138,22 +186,47 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     # Carryover delay to peak (halfnormal)
     _PEAK_EFFECT_DELAY: immutabledict.immutabledict({
         # Median 1.6, <1 27%, longtail
-        'scale': dist.LogNormal(0.5, 0.8)
+        'scale': dist.TruncatedNormal(0.0, 1.0, low=0.0, high=2.0)
     }),
     # hill saturation (gamma) create range 0.1 -> 2/3ish, 0.1 -> 1.0 peak
     _SLOPE: immutabledict.immutabledict({
         #'concentration': dist.Uniform(1.5, 3.),
         #'rate': 2.0 # Fixed to contrain hyperparameter distribution to appropriate range
-        'concentration': dist.Uniform(low=2.0, high=16.0),
-        'rate': 1.0 / 0.15
+        'concentration': dist.Uniform(low=6., high=12.0),
+        'rate': 10.0
     }),
+    # _SLOPE_CONSTRAINED: immutabledict.immutabledict({
+    #   'concentration1': dist.Uniform(low=1.5, high=5.0),
+    #   'concentration0': 10.0
+    #   #'concentration': dist.TruncatedNormal(6.0, 2.0, low=0.0, high=8.0)
+    # }),
+    # _HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED: immutabledict.immutabledict({
+    #   'concentration': dist.TruncatedNormal(4.0, 2.0, low=0.0, high=8.0)
+    # }),
+    _SLOPE_CONSTRAINED: immutabledict.immutabledict({
+      # 'concentration1': dist.Uniform(low=.5, high=10.0),
+      # 'concentration0': 5.0
+
+      # Fixed Prob
+      'concentration1': 2.0,
+      'concentration0': 4.0
+      
+    }),
+    _HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED: immutabledict.immutabledict({
+      #'concentration': dist.Uniform(0.0, 8.0)
+
+      # Uniform Prob
+      'concentration1': 2.0,
+      'concentration0': 4.0
+    }),
+
     # Half point most effective, gamma
     # Create range 0.5 -> 2 (Half --> double mean contribution)
     _HALF_MAX_EFFECTIVE_CONCENTRATION: immutabledict.immutabledict({
       #'concentration': dist.Uniform(2., 5.),
       #'rate': 2.0
-      'concentration': dist.Uniform(low=10., high=20.0),
-      'rate': 1 / 0.15
+      'concentration': dist.Uniform(low=6., high=16.0),
+      'rate': 20.0
     }),
     # Retention rate of advertisement Beta
     _AD_EFFECT_RETENTION_RATE: immutabledict.immutabledict({
@@ -164,23 +237,31 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     _SATURATION: immutabledict.immutabledict({
         # 1.34 mean --> HalfNormal(1.34)
         #'scale': dist.LogNormal(loc=0.3, scale=0.3)
-        'concentration': dist.Uniform(low=1.5, high=4.0),
+        'concentration': dist.Uniform(low=1.5, high=8.0),
         'rate': 1.0 / 0.5
     }),
   })
 
 
 
-def _generate_media_prior_distribution(mean: float, alpha:float=1.5, mode:str='halfnormal'):
-  """ Generate beta distributions that mirror half normals except low 0 weighting. """
+def _generate_media_prior_distribution(mean: float, alpha:float=1.5, concentration:float=2.0, mode:str='halfnormal'):
+  """ Generate ROI media prior distributions, industry standard is HalfNormal,
+    but do we really believe 0-credit is the most likely outcome?. """
   if mode == 'beta':
+    if mean > 0.33:
+      raise ValueError(
+        'For a mean > 0.33, a beta distribution is unsuitable as a ROI prior. Try Gamma'
+      )
     beta = alpha * (mean - 1) / mean * -1
     return dist.Beta(concentration1=alpha, concentration0=beta)
   elif mode == 'halfnormal':
     return dist.HalfNormal(scale=mean)
+  elif mode == 'gamma':
+    rate = concentration / mean
+    return dist.Gamma(concentration=concentration, rate=rate)
   else:
     raise ValueError(
-      "We support only 'beta' 'halfnormal' media prior distributions"
+      "We support only 'beta' 'halfnormal' 'gamma' media prior distributions"
     )
 
 def _get_transform_prior_distributions() -> Mapping[str, Prior]:
@@ -196,7 +277,9 @@ def _get_transform_prior_distributions() -> Mapping[str, Prior]:
     # Weak prior no saturataion
     _SATURATION: dist.Gamma(concentration=3.0, rate=2.0),#dist.HalfNormal(scale= 2.),
     _HALF_MAX_EFFECTIVE_CONCENTRATION: dist.Gamma(concentration= 1.5, rate= 2.),
-    _SLOPE: dist.Gamma(concentration=1.5, rate=2.)
+    _SLOPE: dist.Gamma(concentration=1.5, rate=2.),
+    _HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED: dist.Beta(concentration1=1., concentration0=1.),
+    _SLOPE_CONSTRAINED: dist.Beta(concentration1=3., concentration0=5.),
   })
 
 
@@ -217,14 +300,14 @@ def _get_transform_prior_hyperprior_distribution(
 
   prior_fn = _get_transform_prior_distributions()[prior_name].__class__
 
-  if prior_fn != dist.Beta:
+  if (prior_fn != dist.Beta) or ('concentration' not in hyperprior_samples):
     return prior_fn(
       **hyperprior_samples
     )
   # Beta hyperprior specs are symmetric, parameterized around a concentration
   return prior_fn(
+    concentration1= 9 - hyperprior_samples['concentration'],
     concentration0= 1 + hyperprior_samples['concentration'],
-    concentration1= 9 - hyperprior_samples['concentration']
   )
 
 _ENSEMBLE_ADSTOCK_TRANSFORMS = immutabledict.immutabledict({
@@ -232,9 +315,10 @@ _ENSEMBLE_ADSTOCK_TRANSFORMS = immutabledict.immutabledict({
   (_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY): media_transforms.carryover
 })
 _ENSEMBLE_SATURATION_TRANSFORMS = immutabledict.immutabledict({
-  (_EXPONENT,): media_transforms.apply_exponent_safe,
+  #(_EXPONENT,): media_transforms.apply_exponent_safe,
   (_SATURATION,): media_transforms.logistic_saturation,
-  (_HALF_MAX_EFFECTIVE_CONCENTRATION, _SLOPE): media_transforms.hill,
+  #(_HALF_MAX_EFFECTIVE_CONCENTRATION, _SLOPE): media_transforms.hill,
+  (_HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED, _SLOPE_CONSTRAINED): media_transforms.hill_constrained,
 })
 
 _ENSEMBLE_TRANSFORMS_PRIOR_NAMES = set([
@@ -368,6 +452,136 @@ def transform_adstock(media_data: jnp.ndarray,
   n = media_transforms.apply_exponent_safe(data=adstock, exponent=exponent)
 
   return n / n.sum(axis=0) * adstock.sum(axis=0)
+
+
+def transform_hill_constrained_adstock(media_data: jnp.ndarray,
+                           transform_samples,
+                           hill_normalise: bool = False,
+                           adstock_normalise: bool = True,
+                           **kwargs) -> jnp.ndarray:
+  """Transforms the input data with the adstock and hill functions.
+
+  Args:
+    media_data: Media data to be transformed. It is expected to have 2 dims for
+      national models and 3 for geo models.
+    adstock_normalise: Whether to normalise the output values, so adstock contribution sums to 1
+    saturation_normalise: Whether to normalise so 0.5 input = 0.5 output, ensure 50% linearity.
+
+  Returns:
+    The transformed media data.
+  """
+  half_max_effective_concentration_constrained = transform_samples[_HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED]
+  slope_constrained = transform_samples[_SLOPE_CONSTRAINED]
+
+  lag_weight = transform_samples[_LAG_WEIGHT]
+
+  if media_data.ndim == 3:
+    lag_weight = jnp.expand_dims(lag_weight, axis=-1)
+    half_max_effective_concentration_constrained = jnp.expand_dims(
+        half_max_effective_concentration_constrained, axis=-1)
+    slope_constrained = jnp.expand_dims(slope_constrained, axis=-1)
+
+
+  # TODO Fix number_lags carrythrough
+  adstock_media = media_transforms.adstock(
+          data=media_data,
+          lag_weight=lag_weight, adstock_normalise=adstock_normalise) # Max lags allowed is 2months
+
+  return media_transforms.hill_constrained(
+      data=adstock_media,
+      half_max_effective_concentration_constrained=half_max_effective_concentration_constrained,
+      slope_constrained=slope_constrained,
+      hill_normalise=hill_normalise
+    )
+
+def transform_hill_constrained_carryover(media_data: jnp.ndarray,
+                           transform_samples,
+                           hill_normalise: bool = False,
+                           number_lags:int = 60,
+                           **kwargs) -> jnp.ndarray:
+  """Transforms the input data with the adstock and hill functions.
+
+  Args:
+    media_data: Media data to be transformed. It is expected to have 2 dims for
+      national models and 3 for geo models.
+    adstock_normalise: Whether to normalise the output values, so adstock contribution sums to 1
+    saturation_normalise: Whether to normalise so 0.5 input = 0.5 output, ensure 50% linearity.
+
+  Returns:
+    The transformed media data.
+  """
+  half_max_effective_concentration_constrained = transform_samples[_HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED]
+  slope_constrained = transform_samples[_SLOPE_CONSTRAINED]
+
+  peak_effect_delay = transform_samples[_PEAK_EFFECT_DELAY]
+  ad_effect_retention_rate = transform_samples[_AD_EFFECT_RETENTION_RATE]
+
+  if media_data.ndim == 3:
+    peak_effect_delay = jnp.expand_dims(peak_effect_delay, axis=-1)
+    ad_effect_retention_rate = jnp.expand_dims(ad_effect_retention_rate, axis=-1)
+    half_max_effective_concentration_constrained = jnp.expand_dims(
+        half_max_effective_concentration_constrained, axis=-1)
+    slope_constrained = jnp.expand_dims(slope_constrained, axis=-1)
+
+
+  # TODO Fix number_lags carrythrough
+  carryover = media_transforms.carryover(
+      data=media_data,
+      ad_effect_retention_rate=ad_effect_retention_rate,
+      peak_effect_delay=peak_effect_delay,
+      number_lags=number_lags) # Max lags allowed is 2months
+
+  return media_transforms.hill_constrained(
+      data=carryover,
+      half_max_effective_concentration_constrained=half_max_effective_concentration_constrained,
+      slope_constrained=slope_constrained,
+      hill_normalise=hill_normalise
+    )
+
+def transform_hill_carryover(media_data: jnp.ndarray,
+                           transform_samples,
+                           hill_normalise: bool = False,
+                           adstock_normalise: bool = True,
+                           number_lags:int = 60,
+                           **kwargs) -> jnp.ndarray:
+  """Transforms the input data with the adstock and hill functions.
+
+  Args:
+    media_data: Media data to be transformed. It is expected to have 2 dims for
+      national models and 3 for geo models.
+    adstock_normalise: Whether to normalise the output values, so adstock contribution sums to 1
+    saturation_normalise: Whether to normalise so 0.5 input = 0.5 output, ensure 50% linearity.
+
+  Returns:
+    The transformed media data.
+  """
+  half_max_effective_concentration = transform_samples[_HALF_MAX_EFFECTIVE_CONCENTRATION]
+  slope = transform_samples[_SLOPE]
+
+  peak_effect_delay = transform_samples[_PEAK_EFFECT_DELAY]
+  ad_effect_retention_rate = transform_samples[_AD_EFFECT_RETENTION_RATE]
+
+  if media_data.ndim == 3:
+    peak_effect_delay = jnp.expand_dims(peak_effect_delay, axis=-1)
+    ad_effect_retention_rate = jnp.expand_dims(ad_effect_retention_rate, axis=-1)
+    half_max_effective_concentration = jnp.expand_dims(
+        half_max_effective_concentration, axis=-1)
+    slope = jnp.expand_dims(slope, axis=-1)
+
+
+  # TODO Fix number_lags carrythrough
+  carryover = media_transforms.carryover(
+      data=media_data,
+      ad_effect_retention_rate=ad_effect_retention_rate,
+      peak_effect_delay=peak_effect_delay,
+      number_lags=number_lags) # Max lags allowed is 2months
+
+  return media_transforms.hill(
+      data=carryover,
+      half_max_effective_concentration=half_max_effective_concentration,
+      slope=slope,
+      hill_normalise=hill_normalise
+    )
 
 
 def transform_hill_adstock(media_data: jnp.ndarray,
@@ -720,6 +934,12 @@ TRANSFORM_PRIORS_NAMES = immutabledict.immutabledict({
         frozenset((_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY, _EXPONENT)),
     "adstock":
         frozenset((_EXPONENT, _LAG_WEIGHT)),
+    "hill_constrained_adstock":
+        frozenset((_LAG_WEIGHT, _HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED, _SLOPE_CONSTRAINED)),
+    "hill_constrained_carryover":
+        frozenset((_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY, _HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED, _SLOPE_CONSTRAINED)),
+    "hill_carryover":
+        frozenset((_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY, _HALF_MAX_EFFECTIVE_CONCENTRATION, _SLOPE)),
     "hill_adstock":
         frozenset((_LAG_WEIGHT, _HALF_MAX_EFFECTIVE_CONCENTRATION, _SLOPE)),
     "logistic_carryover":
@@ -731,6 +951,9 @@ TRANSFORM_PRIORS_NAMES = immutabledict.immutabledict({
 })
 
 _NAMES_TO_MODEL_TRANSFORMS = immutabledict.immutabledict({
+    "hill_constrained_carryover": transform_hill_constrained_carryover,
+    "hill_constrained_adstock": transform_hill_constrained_adstock,
+    "hill_carryover": transform_hill_carryover,
     "hill_adstock": transform_hill_adstock,
     "adstock": transform_adstock,
     "carryover": transform_carryover,
@@ -1073,7 +1296,7 @@ def calculate_media_effects(
   # In case of daily data, number of lags should be 13*7.
   transform_kwargs = transform_kwargs or {}
   if transform_function in carryover_models:
-    transform_kwargs['number_lags'] = 13 if frequency == 52 else 60
+    transform_kwargs['number_lags'] = 13 if frequency == 52 else 120
 
   media_transformed = apply_media_transform_function(
     transform_function,
@@ -1214,11 +1437,18 @@ def calculate_media_effects(
 
     with numpyro.plate(name=F'{_MODEL_WEIGHTS}_plate', size=n_models):
       weights = numpyro.sample(
-        _MODEL_WEIGHTS,
+        _MODEL_WEIGHTS + '_raw',
         fn=default_priors[_MODEL_WEIGHTS]
       )
+      model_sigma = numpyro.sample(
+          name=_MODEL_SIGMA,
+          fn=custom_priors.get('model_sigma', default_priors[_MODEL_SIGMA])
+      )
     # The max credit given to any model is 50%.
-    weights = weights / (n_models / 2)
+    weights = numpyro.deterministic(
+      name=_MODEL_WEIGHTS,
+      value=weights / (n_models / 2)
+    )
 
     #weights = weights / weights.sum()
 
@@ -1234,25 +1464,22 @@ def calculate_media_effects(
     #   value= media_contribution.mean(axis=0)
     # )
 
-    # with numpyro.plate(name=f"{_MODEL_SIGMA}_geo_plate", size=n_geos):
-    #   with numpyro.plate(name=f'{_MODEL_SIGMA}_plate', size=n_models):
-    #     model_sigma = numpyro.sample(
-    #         name=_MODEL_SIGMA,
-    #         fn=custom_priors.get('model_sigma', default_priors[_MODEL_SIGMA])
-    #     )
-
-    model_predictions = (
-      media_contribution.sum(axis=-1) +
-      intercept +
-      seasonal_effects + trend_effects +
-      extra_features_effects
+    model_predictions = numpyro.deterministic(
+      name='submodel_mu',
+      value = (
+        media_contribution.sum(axis=-1) +
+        intercept +
+        seasonal_effects + trend_effects +
+        extra_features_effects
+      )
     )
+
 
     # Division by n_models to make weight of ensemble model 50%
     _ = numpyro.sample(
-      name='model_target',
+      name='submodel_target',
       fn=dist.Normal(
-        loc=model_predictions, scale=sigma
+        loc=model_predictions, scale=model_sigma.reshape(-1, 1)
       ),
       obs=(jnp.repeat(
         jnp.expand_dims(
