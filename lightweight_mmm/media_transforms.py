@@ -21,8 +21,8 @@ import jax
 import jax.numpy as jnp
 
 MAX_DEGREES_SEASONALITY = 4
-RETENTION_LIMIT = 0.99
-
+ADSTOCK_LIMIT = 0.99
+AD_EFFECT_RETENTION_LIMIT = 0.99 #0.999
 
 #@functools.partial(jax.jit, static_argnums=[0, 1])
 def calculate_seasonality_ensemble(
@@ -153,7 +153,7 @@ def adstock(data: jnp.ndarray,
     The adstock output of the input array.
   """
   #lag_weight = jnp.clip(lag_weight, None, RETENTION_LIMIT)
-  lag_weight = lag_weight * RETENTION_LIMIT
+  lag_weight = lag_weight * ADSTOCK_LIMIT
 
   def adstock_internal(prev_adstock: jnp.ndarray,
                        data: jnp.ndarray,
@@ -403,11 +403,11 @@ def carryover(
   number_lags: int = 100) -> jnp.ndarray:
 
   #ad_effect_retention_rate = jnp.clip(ad_effect_retention_rate, None, RETENTION_LIMIT)
-  ad_effect_retention_rate = ad_effect_retention_rate * RETENTION_LIMIT
+  ad_effect_retention_rate = ad_effect_retention_rate * AD_EFFECT_RETENTION_LIMIT
 
   lags_arange = jnp.expand_dims(jnp.arange(number_lags, dtype=jnp.float32),
                               axis=-1)
-  weights = ad_effect_retention_rate**((lags_arange - peak_effect_delay) ** 2)
+  weights = ad_effect_retention_rate**((lags_arange - peak_effect_delay)**2)
   #weights = weights / weights.sum(axis=0)
   window = jnp.concatenate([jnp.zeros((number_lags - 1, data.shape[1])), weights])
   # Create accurate normaliser

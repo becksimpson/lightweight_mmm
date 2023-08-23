@@ -187,6 +187,8 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     _PEAK_EFFECT_DELAY: immutabledict.immutabledict({
         # Median 1.6, <1 27%, longtail
         'scale': dist.TruncatedNormal(0.0, 1.0, low=0.0, high=2.0)
+        #'scale': dist.TruncatedNormal(0.0, 2.0, low=0.0, high=3.0)
+        #'scale': dist.Uniform(1.0, 5.0)
     }),
     # hill saturation (gamma) create range 0.1 -> 2/3ish, 0.1 -> 1.0 peak
     _SLOPE: immutabledict.immutabledict({
@@ -1296,7 +1298,7 @@ def calculate_media_effects(
   # In case of daily data, number of lags should be 13*7.
   transform_kwargs = transform_kwargs or {}
   if transform_function in carryover_models:
-    transform_kwargs['number_lags'] = 13 if frequency == 52 else 120
+    transform_kwargs['number_lags'] = 13 if frequency == 52 else 120# 240
 
   media_transformed = apply_media_transform_function(
     transform_function,
