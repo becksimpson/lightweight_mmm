@@ -22,7 +22,7 @@ import jax.numpy as jnp
 
 MAX_DEGREES_SEASONALITY = 4
 ADSTOCK_LIMIT = 0.99
-AD_EFFECT_RETENTION_LIMIT = 0.99 #0.999
+AD_EFFECT_RETENTION_LIMIT = 0.999 #0.999
 
 #@functools.partial(jax.jit, static_argnums=[0, 1])
 def calculate_seasonality_ensemble(

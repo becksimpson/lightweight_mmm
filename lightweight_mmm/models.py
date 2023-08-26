@@ -183,6 +183,11 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
         #'concentration': dist.Uniform(0., 8.),
         'concentration': dist.TruncatedNormal(4.0, 2.0, low=0.0, high=8.0)
     }),
+    # Retention rate of advertisement Beta
+    _AD_EFFECT_RETENTION_RATE: immutabledict.immutabledict({
+        #'concentration': dist.Uniform(0., 8.),
+        'concentration': dist.TruncatedNormal(4.0, 2.0, low=0.0, high=8.0)
+    }),
     # Carryover delay to peak (halfnormal)
     _PEAK_EFFECT_DELAY: immutabledict.immutabledict({
         # Median 1.6, <1 27%, longtail
@@ -229,11 +234,6 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
       #'rate': 2.0
       'concentration': dist.Uniform(low=6., high=16.0),
       'rate': 20.0
-    }),
-    # Retention rate of advertisement Beta
-    _AD_EFFECT_RETENTION_RATE: immutabledict.immutabledict({
-        #'concentration': dist.Uniform(0., 8.),
-        'concentration': dist.TruncatedNormal(4.0, 2.0, low=0.0, high=8.0)
     }),
     # Saturation for logistic saturation
     _SATURATION: immutabledict.immutabledict({
