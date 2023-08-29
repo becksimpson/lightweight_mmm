@@ -21,7 +21,7 @@ import jax
 import jax.numpy as jnp
 
 MAX_DEGREES_SEASONALITY = 4
-ADSTOCK_LIMIT = 0.99
+ADSTOCK_LIMIT = 0.97
 AD_EFFECT_RETENTION_LIMIT = 0.999 #0.999
 
 #@functools.partial(jax.jit, static_argnums=[0, 1])
@@ -220,9 +220,9 @@ def hill_constrained(data: jnp.ndarray,
     The hill values for the respective input data.
   """
   # Range 0.3 --> 1.0
-  half_max_effective_concentration = half_max_effective_concentration_constrained * 0.7 + 0.3 #
+  half_max_effective_concentration = half_max_effective_concentration_constrained * 2.0 + 1.0 #
   # Range 0.5 --> 3.0
-  slope = slope_constrained * 2.7 + 0.3
+  slope = slope_constrained * 2.5 + 0.5
 
   # slope = jnp.clip(slope, a_min=0.5, a_max=3.0)
   # half_max_effective_concentration = jnp.clip(half_max_effective_concentration, a_min=0.3, a_max=1.0)

@@ -107,7 +107,7 @@ def _get_default_priors() -> Mapping[str, Prior]:
   # Since JAX cannot be called before absl.app.run in tests we get default
   # priors from a function.
   return immutabledict.immutabledict({
-      _INTERCEPT: dist.HalfNormal(scale=0.1),
+      _INTERCEPT: dist.HalfNormal(scale=0.5),
       _COEF_TREND: dist.HalfNormal(scale=0.001),# dist.Normal(loc=0., scale=0.01),
       _EXPO_TREND: dist.Uniform(low=0.5, high=1.5),
       _SIGMA: dist.Gamma(concentration=1., rate=1.),
@@ -181,17 +181,17 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     # Adstock lag_weight (Beta), [0.0, 1.0], higher, more carryover
     _LAG_WEIGHT: immutabledict.immutabledict({
         #'concentration': dist.Uniform(0., 8.),
-        'concentration': dist.TruncatedNormal(4.0, 2.0, low=0.0, high=8.0)
+        'concentration': dist.TruncatedNormal(2.0, 2.0, low=0.0, high=8.0)
     }),
     # Retention rate of advertisement Beta
     _AD_EFFECT_RETENTION_RATE: immutabledict.immutabledict({
         #'concentration': dist.Uniform(0., 8.),
-        'concentration': dist.TruncatedNormal(4.0, 2.0, low=0.0, high=8.0)
+        'concentration': dist.TruncatedNormal(2.0, 2.0, low=0.0, high=8.0)
     }),
     # Carryover delay to peak (halfnormal)
     _PEAK_EFFECT_DELAY: immutabledict.immutabledict({
         # Median 1.6, <1 27%, longtail
-        'scale': dist.TruncatedNormal(0.0, 1.0, low=0.0, high=2.0)
+        'scale': dist.TruncatedNormal(0.0, 1.0, low=0.0, high=3.0)
         #'scale': dist.TruncatedNormal(0.0, 2.0, low=0.0, high=3.0)
         #'scale': dist.Uniform(1.0, 5.0)
     }),
@@ -216,15 +216,15 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
 
       # Fixed Prob
       'concentration1': 2.0,
-      'concentration0': 4.0
+      'concentration0': 6.0
       
     }),
     _HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED: immutabledict.immutabledict({
       #'concentration': dist.Uniform(0.0, 8.0)
-
+    
       # Uniform Prob
-      'concentration1': 2.0,
-      'concentration0': 4.0
+      'concentration1': 1.0, # 2.0
+      'concentration0': 1.0 #4.0
     }),
 
     # Half point most effective, gamma
@@ -239,8 +239,8 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     _SATURATION: immutabledict.immutabledict({
         # 1.34 mean --> HalfNormal(1.34)
         #'scale': dist.LogNormal(loc=0.3, scale=0.3)
-        'concentration': dist.Uniform(low=1.5, high=8.0),
-        'rate': 1.0 / 0.5
+        'concentration': dist.Uniform(low=1.5, high=4.0),
+        'rate': 1.0 / 0.3333
     }),
   })
 
@@ -1298,7 +1298,7 @@ def calculate_media_effects(
   # In case of daily data, number of lags should be 13*7.
   transform_kwargs = transform_kwargs or {}
   if transform_function in carryover_models:
-    transform_kwargs['number_lags'] = 13 if frequency == 52 else 120# 240
+    transform_kwargs['number_lags'] = 13 if frequency == 52 else 180# 120
 
   media_transformed = apply_media_transform_function(
     transform_function,
