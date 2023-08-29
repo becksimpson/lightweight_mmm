@@ -21,8 +21,9 @@ import jax
 import jax.numpy as jnp
 
 MAX_DEGREES_SEASONALITY = 4
-ADSTOCK_LIMIT = 0.97
+ADSTOCK_LIMIT = 0.95
 AD_EFFECT_RETENTION_LIMIT = 0.999 #0.999
+
 
 #@functools.partial(jax.jit, static_argnums=[0, 1])
 def calculate_seasonality_ensemble(
@@ -220,7 +221,7 @@ def hill_constrained(data: jnp.ndarray,
     The hill values for the respective input data.
   """
   # Range 0.3 --> 1.0
-  half_max_effective_concentration = half_max_effective_concentration_constrained * 2.0 + 1.0 #
+  half_max_effective_concentration = half_max_effective_concentration_constrained * 0.7 + 0.3 #
   # Range 0.5 --> 3.0
   slope = slope_constrained * 2.5 + 0.5
 

@@ -216,15 +216,15 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
 
       # Fixed Prob
       'concentration1': 2.0,
-      'concentration0': 6.0
+      'concentration0': 2.0
       
     }),
     _HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED: immutabledict.immutabledict({
       #'concentration': dist.Uniform(0.0, 8.0)
     
       # Uniform Prob
-      'concentration1': 1.0, # 2.0
-      'concentration0': 1.0 #4.0
+      'concentration1': 2.0,#1.0, # 2.0
+      'concentration0': 5.0#1.0 #4.0
     }),
 
     # Half point most effective, gamma
@@ -239,7 +239,9 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     _SATURATION: immutabledict.immutabledict({
         # 1.34 mean --> HalfNormal(1.34)
         #'scale': dist.LogNormal(loc=0.3, scale=0.3)
-        'concentration': dist.Uniform(low=1.5, high=4.0),
+        #'concentration': dist.Uniform(low=1.5, high=4.0),
+        # More bias to lower saturation
+        'concentration': dist.Uniform(3, 7),# dist.TruncatedNormal(1.5, 1.5, low=1.5, high=4.0),
         'rate': 1.0 / 0.3333
     }),
   })
