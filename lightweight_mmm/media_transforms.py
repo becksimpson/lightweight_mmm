@@ -21,7 +21,7 @@ import jax
 import jax.numpy as jnp
 
 MAX_DEGREES_SEASONALITY = 4
-ADSTOCK_LIMIT = 0.95
+ADSTOCK_LIMIT = 0.97
 AD_EFFECT_RETENTION_LIMIT = 0.999 #0.999
 
 
@@ -189,6 +189,8 @@ def logistic_saturation(
     data: Input data.
     saturation: Controls the saturation, higher slope, stronger saturation
   """
+  # TODO: Used with scaled beta
+  saturation = 1.0 + saturation * 3.0
   log_data = (1.0 - jnp.exp(-saturation * data)) / (1.0 + jnp.exp(-saturation * data))
   one_norm = (1.0 - jnp.exp(-saturation)) / (1.0 + jnp.exp(-saturation))
   

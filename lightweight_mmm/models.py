@@ -216,7 +216,7 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
 
       # Fixed Prob
       'concentration1': 2.0,
-      'concentration0': 2.0
+      'concentration0': 5.0
       
     }),
     _HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED: immutabledict.immutabledict({
@@ -241,8 +241,11 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
         #'scale': dist.LogNormal(loc=0.3, scale=0.3)
         #'concentration': dist.Uniform(low=1.5, high=4.0),
         # More bias to lower saturation
-        'concentration': dist.Uniform(3, 7),# dist.TruncatedNormal(1.5, 1.5, low=1.5, high=4.0),
-        'rate': 1.0 / 0.3333
+
+        'concentration1': dist.Uniform(1.0, 5.0),
+        'concentration0': 5.0,
+        # 'concentration': dist.Uniform(3, 7),# dist.TruncatedNormal(1.5, 1.5, low=1.5, high=4.0),
+        # 'rate': 1.0 / 0.3333
     }),
   })
 
@@ -279,7 +282,8 @@ def _get_transform_prior_distributions() -> Mapping[str, Prior]:
     # Saturation effects
     _EXPONENT: dist.Beta(concentration1=5., concentration0=1.),
     # Weak prior no saturataion
-    _SATURATION: dist.Gamma(concentration=3.0, rate=2.0),#dist.HalfNormal(scale= 2.),
+    #_SATURATION: dist.Gamma(concentration=3.0, rate=2.0),#dist.HalfNormal(scale= 2.),
+    _SATURATION: dist.Beta(concentration1=5.0, concentration0=2.0),
     _HALF_MAX_EFFECTIVE_CONCENTRATION: dist.Gamma(concentration= 1.5, rate= 2.),
     _SLOPE: dist.Gamma(concentration=1.5, rate=2.),
     _HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED: dist.Beta(concentration1=1., concentration0=1.),
@@ -1404,11 +1408,22 @@ def calculate_media_effects(
           name="channel_media_plate",
           size=n_channels,
           dim=-2 if media_data.ndim == 3 else -1):
+        
+        lower_bounds = jnp.ones(len(media_prior)) * 0.25
+        upper_bounds = jnp.ones(len(media_prior)) * 4.0
+        upper_bounds = upper_bounds.at[-3:].set(10.0)
+        lower_bounds = lower_bounds.at[-3:].set(0.0)
         coef_media = numpyro.sample(
             name="channel_coef_media_models" if media_data.ndim == 3 else "coef_media_models",
             #fn=dist.TruncatedNormal(loc=media_prior, scale=0.05, low=1e-6)
             #fn=dist.HalfNormal(scale=media_prior)
-            fn=_generate_media_prior_distribution(media_prior)
+            #fn=_generate_media_prior_distribution(media_prior)
+            fn= dist.TruncatedNormal(
+              loc=0.0,
+              scale=media_prior,
+              low=lower_bounds * media_prior,
+              high=upper_bounds * media_prior
+            )
           )#)
         if media_data.ndim == 3:
           with numpyro.plate(
@@ -1422,6 +1437,7 @@ def calculate_media_effects(
                 fn=_generate_media_prior_distribution(coef_media * normalisation_factor)
                 #fn=dist.HalfNormal(scale=coef_media * normalisation_factor)
             )
+    #coef_media = coef_media * media_prior
     # coef_media = numpyro.deterministic(
     #   name='coef_media',
     #   value=model_select(
