@@ -108,7 +108,7 @@ def _get_default_priors() -> Mapping[str, Prior]:
   # priors from a function.
   return immutabledict.immutabledict({
       _INTERCEPT: dist.HalfNormal(scale=0.5),
-      _COEF_TREND: dist.HalfNormal(scale=0.001),# dist.Normal(loc=0., scale=0.01),
+      _COEF_TREND: dist.HalfNormal(scale=0.005),# dist.Normal(loc=0., scale=0.01),
       _EXPO_TREND: dist.Uniform(low=0.5, high=1.5),
       _SIGMA: dist.Gamma(concentration=1., rate=1.),
       _MODEL_SIGMA: dist.Gamma(concentration=1., rate=1.),

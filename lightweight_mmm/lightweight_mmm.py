@@ -447,7 +447,7 @@ class LightweightMMM:
 
     self.custom_priors = custom_priors
 
-    if extra_features_names is not None:
+    if extra_features_names is not None or extra_features is None:
       self.extra_features_names = extra_features_names
     else:
       self.extra_features_names = [f"extra_channel_{i}" for i in range(extra_features.shape[1])]
