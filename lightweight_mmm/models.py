@@ -1130,6 +1130,7 @@ def calculate_extra_features_effects(
 #@functools.partial(jax.jit, static_argnames=('frequency', 'transform_kwargs', 'transform_function', 'transform_hyperprior'))
 def calculate_media_effects(
     media_data: jnp.ndarray,
+    extra_features: jnp.ndarray,
     media_prior: jnp.ndarray,
     transform_function: TransformFunction,
     transform_hyperprior: bool,
@@ -1266,8 +1267,9 @@ def calculate_media_effects(
         lower_bounds = jnp.ones(len(media_prior)) * 0.25
         upper_bounds = jnp.ones(len(media_prior)) * 4.0
         # I don't want bounds for visitor channels
-        upper_bounds = upper_bounds.at[-3:].set(10.0)
-        lower_bounds = lower_bounds.at[-3:].set(0.0)
+        n_extra_channels = 6 - extra_features.shape[1]
+        upper_bounds = upper_bounds.at[-n_extra_channels:].set(10.0)
+        lower_bounds = lower_bounds.at[-n_extra_channels:].set(0.0)
         coef_media = numpyro.sample(
             name="channel_coef_media_models" if media_data.ndim == 3 else "coef_media_models",
             #fn=dist.TruncatedNormal(loc=media_prior, scale=0.05, low=1e-6)
@@ -1453,6 +1455,7 @@ def media_mix_model(
 
   media_effects = calculate_media_effects(
     media_data,
+    extra_features,
     media_prior,
     transform_function,
     transform_hyperprior,
