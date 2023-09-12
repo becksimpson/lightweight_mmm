@@ -1340,6 +1340,7 @@ def _make_prior_and_posterior_subplot_for_one_feature(
     kde_bandwidth_adjust_for_posterior: float = 1,
     seed: Optional[int] = None,
     posterior_names: List[str] = None,
+    plot_scale_bounds=False
 ) -> Tuple[matplotlib.figure.Figure, matplotlib.gridspec.GridSpec, int]:
   """Helper function to make the prior and posterior distribution subplots.
 
@@ -1424,6 +1425,10 @@ def _make_prior_and_posterior_subplot_for_one_feature(
       clip=clipping_bounds,
       color="tab:blue", ax=ax, label="prior")
   ax.axvline(np.median(prior_samples), linestyle='--', color='tab:blue', label='prior median')
+  if plot_scale_bounds:
+    ax.axvline(prior_distribution.scale, linestyle='--', color='black')
+    ax.axvline(prior_distribution.scale * 0.25, linestyle='--', color='black')
+    ax.axvline(prior_distribution.scale * 3, linestyle='--', color='black')
   prior_xlims = ax.get_xlim()
 
   if posterior_samples.ndim == 1:
@@ -1898,6 +1903,7 @@ def plot_prior_and_posterior(
               i_ax=i_ax,
               hyperprior=hyperprior,
               posterior_names=posterior_names,
+              plot_scale_bounds=feature in ['coef_media_models', 'coef_media'],
               **kwargs_for_helper_function
             )
         # if feature == 'coef_media':

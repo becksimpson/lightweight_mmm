@@ -107,7 +107,7 @@ def _get_default_priors() -> Mapping[str, Prior]:
   # Since JAX cannot be called before absl.app.run in tests we get default
   # priors from a function.
   return immutabledict.immutabledict({
-      _INTERCEPT: dist.HalfNormal(scale=0.5),
+      _INTERCEPT: dist.HalfNormal(scale=0.2),
       _COEF_TREND: dist.HalfNormal(scale=0.005),# dist.Normal(loc=0., scale=0.01),
       _EXPO_TREND: dist.Uniform(low=0.5, high=1.5),
       _SIGMA: dist.Gamma(concentration=1., rate=1.),
@@ -1410,7 +1410,7 @@ def calculate_media_effects(
           dim=-2 if media_data.ndim == 3 else -1):
         
         lower_bounds = jnp.ones(len(media_prior)) * 0.25
-        upper_bounds = jnp.ones(len(media_prior)) * 4.0
+        upper_bounds = jnp.ones(len(media_prior)) * 3.0
         upper_bounds = upper_bounds.at[-3:].set(10.0)
         lower_bounds = lower_bounds.at[-3:].set(0.0)
         coef_media = numpyro.sample(
