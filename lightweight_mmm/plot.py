@@ -1820,7 +1820,11 @@ def plot_prior_and_posterior(
             if idx == i_feature:
               dd[p] = v
         if dd:
-          prior_distribution = prior_distribution.__class__(**dd)
+          if 'low' in dd and prior_distribution.__class__ == numpyro.distributions.HalfNormal:
+            print(dd)
+            prior_distribution = numpyro.distributions.TruncatedNormal(**dd)
+          else:
+            prior_distribution = prior_distribution.__class__(**dd)
         for j_geo in range(media_mix_model.n_geos):
           ch = extra_features_names[i_feature] if extra_features_names is not None else i_feature
           subplot_title = f"{feature} feature {ch}, geo {j_geo}"

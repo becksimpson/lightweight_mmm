@@ -655,37 +655,9 @@ def transform_carryover(media_data: jnp.ndarray,
     exponent=transform_samples[_EXPONENT]
   )
 
-# def transform_carryover(media_data: jnp.ndarray,
-#                         transform_samples,
-#                         number_lags: int = 60,
-#                         **_
-#                         ) -> jnp.ndarray:
-#   """Transforms the input data with the carryover function and exponent.
-
-#   Args:
-#     media_data: Media data to be transformed. It is expected to have 2 dims for
-#       national models and 3 for geo models.
-#     transform_samples:
-#     number_lags: Number of lags for the carryover function.
-
-#   Returns:
-#     The transformed media data.
-#   """
-#   carryover = media_transforms.carryover(
-#       data=media_data,
-#       ad_effect_retention_rate=transform_samples[_AD_EFFECT_RETENTION_RATE],
-#       peak_effect_delay=transform_samples[_PEAK_EFFECT_DELAY],
-#       number_lags=number_lags)
-
-# @functools.partial(jax.jit, static_argnames=(
-#   'number_lags', 'hill_normalise', 'adstock_normalise'
-# ))
 def transform_ensemble_multi(
     media_data: jnp.ndarray,
     transform_samples,
-    #number_lags: int = 60,
-    #hill_normalise: bool = True,
-    #adstock_normalise: bool = True,
     adstock_normalise: bool = True,
     hill_normalise: bool = False,
     logistic_normalise: bool = False,
@@ -707,20 +679,8 @@ def transform_ensemble_multi(
     'logistic_normalise': logistic_normalise
   })
 
-  # transformed_media = media_transforms.carryover(
-  #   data=media_data,
-  #   ad_effect_retention_rate=transform_samples[_AD_EFFECT_RETENTION_RATE],
-  #   peak_effect_delay=transform_samples[_PEAK_EFFECT_DELAY] 
-  # )
-  # transformed_media = media_transforms.exponential_saturation(
-  #   data=media_data,
-  #   saturation=transform_samples[_SATURATION]
-  # )
-  # return jnp.expand_dims(transformed_media, axis=0)
-
 
   transformed_media = None
-  # #[((_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY), media_transforms.carryover)]:#[((_LAG_WEIGHT,), media_transforms.adstock)]:#
   for ad_params, ad_f in _ENSEMBLE_ADSTOCK_TRANSFORMS.items():
     adstocked_media_data = ad_f(
       media_data,
@@ -745,34 +705,13 @@ def transform_ensemble_multi(
         )
   return transformed_media
 
-  transformed_media = jnp.concatenate([
-    jnp.expand_dims(sat_f(
-      ad_f(
-        media_data,
-        *[transform_samples[p] for p in ad_params],
-        **{k: kwargs[k] for k in _TRANSFORM_KWARGS[ad_params] if k in kwargs}
-        #number_lags=number_lags,
-        #adstock_normalise=adstock_normalise
-      ),
-      *[transform_samples[p] for p in sat_params],
-      #**{k:v for k,v in kwargs.items() if _HALF_MAX_EFFECTIVE_CONCENTRATION in sat_params}
-      **{k: kwargs[k] for k in _TRANSFORM_KWARGS[sat_params] if k in kwargs}
-      #hill_normalise=hill_normalise
-    ), 0)
-    for sat_params, sat_f in _ENSEMBLE_SATURATION_TRANSFORMS.items()
-    for ad_params, ad_f in _ENSEMBLE_ADSTOCK_TRANSFORMS.items()
-  ], axis=0)
-
-  return transformed_media
-
-# @functools.partial(jax.jit, static_argnames=(
-#   'number_lags', 'hill_normalise', 'adstock_normalise'
-# ))
-def transform_ensemble(media_data: jnp.ndarray,
-                        transform_samples,
-                        **kwargs
-                        ) -> jnp.ndarray:
-  """Transforms the input data with the carryover function and exponent.
+def transform_ensemble(
+    media_data: jnp.ndarray,
+    transform_samples,
+    **kwargs
+) -> jnp.ndarray:
+  """
+  Transforms the input data with the carryover function and exponent.
 
   Args:
     media_data: Media data to be transformed. It is expected to have 2 dims for
@@ -787,141 +726,7 @@ def transform_ensemble(media_data: jnp.ndarray,
     **kwargs
   )
 
-  # for ad_params, ad_f in [((_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY), media_transforms.carryover)]:#[((_LAG_WEIGHT,), media_transforms.adstock)]:#_ENSEMBLE_ADSTOCK_TRANSFORMS.items():
-  #   # adstocked_media_data = ad_f(
-  #   #   data=jnp.copy(media_data),
-  #   #   **{p: transform_samples[p] for p in ad_params},
-  #   #   #**{k: kwargs[k] for k in _TRANSFORM_KWARGS[ad_params]}
-  #   #   number_lags=number_lags,
-  #   #   #adstock_normalise=adstock_normalise
-  #   # )
-
-  # for sat_params, sat_f in _ENSEMBLE_SATURATION_TRANSFORMS.items():
-  #   saturated_media_data = sat_f(
-  #     jnp.copy(adstocked_media_data),
-  #     *[transform_samples[p] for p in sat_params]
-  #   )
-  #   if transformed_media is None:
-  #     transformed_media = jnp.expand_dims(saturated_media_data, axis=0)
-  #   else:
-  #     transformed_media = jnp.concatenate(
-  #       [
-  #         transformed_media,
-  #         jnp.expand_dims(saturated_media_data, axis=0)
-  #       ], axis=0
-  #     )
-
-  # transformed_media = media_transforms.exponential_saturation(
-  #   data=transformed_media,
-  #   saturation=transform_samples[_SATURATION],
-  # )
-
-
-  # transformed_media = None
-  # transformed_media = media_transforms.carryover(
-  #     data=media_data,
-  #     ad_effect_retention_rate=transform_samples[_AD_EFFECT_RETENTION_RATE],
-  #     peak_effect_delay=transform_samples[_PEAK_EFFECT_DELAY],
-  #     number_lags=number_lags)
-  # transformed_media = media_transforms.hill(
-  #   data=transformed_media,
-  #   half_max_effective_concentration=transform_samples[_HALF_MAX_EFFECTIVE_CONCENTRATION],
-  #   slope=transform_samples[_SLOPE],
-  #   hill_normalise=hill_normalise
-  # )
-
-  # yes
-  # transformed_media = media_transforms.exponential_saturation(
-  #     data=media_transforms.carryover(
-  #         data=media_data,
-  #         ad_effect_retention_rate=transform_samples[_AD_EFFECT_RETENTION_RATE],
-  #         peak_effect_delay=transform_samples[_PEAK_EFFECT_DELAY],
-  #         #number_lags=number_lags
-  #     ),
-  #     saturation=transform_samples[_SATURATION]
-  # )
-
-  # transformed_media = media_transforms.hill(
-  #     data=media_data,
-  #     half_max_effective_concentration=transform_samples[_HALF_MAX_EFFECTIVE_CONCENTRATION],
-  #     slope=transform_samples[_SLOPE],
-  #     #hill_normalise=hill_normalise
-  # )
-
-  # no
-  # carried_data = media_transforms.carryover(
-  #     data=media_data,
-  #     ad_effect_retention_rate=transform_samples[_AD_EFFECT_RETENTION_RATE],
-  #     peak_effect_delay=transform_samples[_PEAK_EFFECT_DELAY],
-  #     #number_lags=number_lags
-  # )
-  # transformed_media = media_transforms.hill(
-  #     data=carried_data,
-  #     half_max_effective_concentration=transform_samples[_HALF_MAX_EFFECTIVE_CONCENTRATION],
-  #     slope=transform_samples[_SLOPE],
-  #     #hill_normalise=hill_normalise
-  # )
-
-  # yes
-  # transformed_media = media_transforms.apply_exponent_safe(
-  #   data=media_transforms.carryover(
-  #         data=media_data,
-  #         ad_effect_retention_rate=transform_samples[_AD_EFFECT_RETENTION_RATE],
-  #         peak_effect_delay=transform_samples[_PEAK_EFFECT_DELAY],
-  #         #number_lags=number_lags
-  #     ),
-  #   exponent=transform_samples[_EXPONENT]
-  # )
-
-  # transformed_media = media_transforms.carryover(
-  #     data=media_data,
-  #     ad_effect_retention_rate=transform_samples[_AD_EFFECT_RETENTION_RATE],
-  #     peak_effect_delay=transform_samples[_PEAK_EFFECT_DELAY],
-  #     #number_lags=number_lags
-  # )
-
-  # yes and quick
-  # transformed_media = media_transforms.exponential_saturation(
-  #     data=media_transforms.adstock(
-  #         data=media_data,
-  #         lag_weight=transform_samples[_LAG_WEIGHT]
-  #     ), 
-  #     saturation=transform_samples[_SATURATION]
-  # )
-
-  # yes and quick
-  # transformed_media = media_transforms.hill(
-  #     data=media_transforms.adstock(
-  #         data=media_data,
-  #         lag_weight=transform_samples[_LAG_WEIGHT]
-  #     ), 
-  #     half_max_effective_concentration=transform_samples[_HALF_MAX_EFFECTIVE_CONCENTRATION],
-  #     slope=transform_samples[_SLOPE],
-  #     #hill_normalise=hill_normalise
-  # )
-
-  #transformed_media = jnp.expand_dims(transformed_media, axis=0)
-
-  # transformed_media = transform_ensemble_multi(
-  #   media_data,
-  #   transform_samples,
-  #   number_lags=number_lags,
-  #   adstock_normalise=adstock_normalise,
-  #   hill_normalise=hill_normalise
-  # )
-  # transformed_media = media_transforms.hill(
-  #     data=media_transforms.adstock(
-  #         data=media_data,
-  #         lag_weight=transform_samples[_LAG_WEIGHT],
-  #         adstock_normalise=adstock_normalise),
-  #     half_max_effective_concentration=transform_samples[_HALF_MAX_EFFECTIVE_CONCENTRATION],
-  #     slope=transform_samples[_SLOPE],
-  #     hill_normalise=hill_normalise
-  # )
-  # transformed_media = jnp.expand_dims(transformed_media, axis=0)
-    
-
-  n_models = transformed_media.shape[0]# len(_ENSEMBLE_ADSTOCK_TRANSFORMS) * len(_ENSEMBLE_SATURATION_TRANSFORMS)
+  n_models = transformed_media.shape[0]
   default_priors = _get_default_priors()
 
   with numpyro.plate(
@@ -980,24 +785,53 @@ _MODEL_TRANSFORMS_TO_PRIOR_NAMES = immutabledict.immutabledict({
 def _get_transform_function_prior_names(
     transform_function: TransformFunction
   ) -> List[str]:
- 
+  """"""
   prior_list = _MODEL_TRANSFORMS_TO_PRIOR_NAMES.get(
     transform_function, _ENSEMBLE_TRANSFORMS_PRIOR_NAMES
   )
 
   return prior_list
 
-def _generate_extra_features_custom_priors(default_priors, custom_priors, n_extra_features):
+def _generate_extra_features_custom_priors(
+  default_priors: Dict,
+  custom_priors: Dict,
+  n_extra_features: int
+) -> numpyro.distributions.Distribution:
+  """
+  Generate prior for extra features, using default and custom priors.
+  All Extra features are assumed to have same distribution.
+
+  Args:
+    default_priors: the default priors for all model parameters
+    custom_priors: the supplied custom priors to modelling
+    n_extra_features: how many extra features we model
+  Returns:
+    Numpyro distribution with n_extra_features length specification
+  """
   dp = default_priors[_COEF_EXTRA_FEATURES]
   cls = dp.__class__
+  ef_cp = custom_priors.get(_COEF_EXTRA_FEATURES, {})
 
+  # For scale, 
   dt = {}
   for p in cls.reparametrized_params:
     # Set to same as base distribution by default
     vals = jnp.ones(n_extra_features) * getattr(dp, p)
-    for i, v in custom_priors.get(_COEF_EXTRA_FEATURES, {}).get(p, {}).items():
+    for i, v in ef_cp.get(p, {}).items():
       vals = vals.at[i].set(v)
     dt[p] = vals
+
+  # There are bounds
+  if 'low' in ef_cp and 'high' in ef_cp:
+    if cls == dist.HalfNormal or cls == dist.Normal:
+      cls = dist.TruncatedNormal
+    else:
+      raise ValueError('Cannot make a bounded non-normal distribution')
+    for p in ['low', 'high']:
+      vals = jnp.ones(n_extra_features)
+      for i, v in ef_cp.get(p, {}).items():
+        vals = vals.at[i].set(v)
+      dt[p] = vals
 
   return cls(**dt)
 
@@ -1118,14 +952,26 @@ def calculate_seasonal_effects(
     frequency:int,
     weekday_seasonality: bool,
     custom_priors: MutableMapping[str, Prior],
-):
-  """ """
+) -> jnp.ndarray:
+  """
+  Calculate (s, n) target attributed to seasonal effects (DOW, DOM, DOY)
+  Seasonal effects are define relative to worst possible day i.e. 0 min.
+
+  Args:
+    media_data: 
+    doms: (n, ) day of the month (1 .. 31) in data
+    degrees_seasonality: how many cos/sin curves to combine to form  DOY seasonal effect
+    frequency: daily (365), weekly (52) data
+    custom_priors: Custom Prior Beliefs about model parameters
+  Return:
+    (s, n) target attributed to seasonal effects > 0 strictly positive
+  """
   data_size = media_data.shape[0]
   n_geos = media_data.shape[2] if media_data.ndim == 3 else 1
-
   default_priors = _get_default_priors()
 
-  # Time of Year Seasonality
+  # Time of Year Seasonality - Fourier series of `degrees_seasonality` curves
+  # Cycles over `frequency` days
   with numpyro.plate(name=f"{_GAMMA_SEASONALITY}_sin_cos_plate", size=2):
     with numpyro.plate(name=f"{_GAMMA_SEASONALITY}_plate",
                        size=degrees_seasonality):
@@ -1141,7 +987,7 @@ def calculate_seasonal_effects(
       gamma_seasonality=gamma_seasonality)
   
 
-  # Day of Month Seasonality
+  # Day of Month Seasonality - Beta Distribution x Multiplier
   if doms is not None:
     with numpyro.plate(name=f"{_PARAM_DAY_OF_MONTH}_plate", size=2):
       dom_param = numpyro.sample(
@@ -1152,8 +998,9 @@ def calculate_seasonal_effects(
       name=_MULTIPLIER_DAY_OF_MONTH,
       fn=custom_priors.get(_MULTIPLIER_DAY_OF_MONTH, default_priors[_MULTIPLIER_DAY_OF_MONTH])
     )
-    dom_series = jbeta.pdf(doms / 32, *dom_param) * dom_multiplier# (1.0 + dom_multiplier)
+    dom_series = jbeta.pdf(doms / 32, *dom_param) * dom_multiplier
     
+    # DOM - min zero
     dom_series = numpyro.deterministic(
       name = 'dom_seasonality',
       value = dom_series - dom_series.min()
@@ -1185,8 +1032,8 @@ def calculate_seasonal_effects(
           name=_COEF_SEASONALITY,
           fn=custom_priors.get(
               _COEF_SEASONALITY, default_priors[_COEF_SEASONALITY]))
-  
 
+  # Total seasonality = doy + dom + dow
   total_seasonality = (
     seasonality * coef_seasonality
   )
@@ -1194,13 +1041,11 @@ def calculate_seasonal_effects(
     name='year_seasonality',
     value=total_seasonality - total_seasonality.min()
   )
-
   if doms is not None:
     total_seasonality += dom_series
   if weekday_seasonality:
     total_seasonality += weekday_series
 
-  # Total seasonality (to aid in re-distribution later)
   return numpyro.deterministic(
     name="total_seasonality",
     value=total_seasonality
@@ -1208,14 +1053,23 @@ def calculate_seasonal_effects(
 
 def calculate_trend_effects(
   media_data: jnp.ndarray,
-  custom_priors
-):
+  custom_priors: Dict
+) -> jnp.ndarray:
+  """
+  Calculate (s, n) target attributed to trend effects,
+  learned linear and power component
+
+  Args:
+    media_data: Media data to be be used in the model.
+    custom_priors: Custom Prior beliefs around model parameters
+  Returns:
+    (s, n) target attributed to trend effects
+  """
   data_size = media_data.shape[0]
   n_geos = media_data.shape[2] if media_data.ndim == 3 else 1
-
   default_priors = _get_default_priors()
 
-  # TODO(): Force all geos to have the same trend sign.
+  # Trend for each National Model
   with numpyro.plate(name=f"{_COEF_TREND}_plate", size=n_geos):
     coef_trend = numpyro.sample(
         name=_COEF_TREND,
@@ -1411,6 +1265,7 @@ def calculate_media_effects(
         
         lower_bounds = jnp.ones(len(media_prior)) * 0.25
         upper_bounds = jnp.ones(len(media_prior)) * 4.0
+        # I don't want bounds for visitor channels
         upper_bounds = upper_bounds.at[-3:].set(10.0)
         lower_bounds = lower_bounds.at[-3:].set(0.0)
         coef_media = numpyro.sample(
