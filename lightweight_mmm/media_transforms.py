@@ -25,45 +25,6 @@ ADSTOCK_LIMIT = 0.97
 AD_EFFECT_RETENTION_LIMIT = 0.999 #0.999
 
 
-def calculate_seasonality_ensemble(
-    number_periods: int,
-    degrees: int,
-    gamma_seasonality: Union[int, float, jnp.ndarray],
-    frequency: int = 52,
-) -> jnp.ndarray:
-  """Calculates cyclic variation seasonality using Fourier terms.
-
-  For detailed info check:
-    https://en.wikipedia.org/wiki/Seasonality#Modeling
-
-  Args:
-    number_periods: Number of seasonal periods in the data. Eg. for 1 year of
-      seasonal data it will be 52, for 3 years of the same kind 156.
-    degrees: Number of degrees to use. Must be greater or equal than 1.
-    gamma_seasonality: Factor to multiply to each degree calculation. Shape must
-      be aligned with the number of degrees.
-    frequency: Frequency of the seasonality being computed. By default is 52 for
-      weekly data (52 weeks in a year).
-
-  Returns:
-    An array with the seasonality values.
-  """
-
-  seasonality_range = jnp.expand_dims(a=jnp.arange(number_periods), axis=-1)
-  degrees_range = jnp.arange(1, degrees + 1) # MAX_DEGREES_SEASONALITY
-  inner_value = seasonality_range * 2 * jnp.pi * degrees_range / frequency
-  season_matrix_sin = jnp.sin(inner_value)
-  season_matrix_cos = jnp.cos(inner_value)
-  season_matrix = jnp.concatenate([
-      jnp.expand_dims(a=season_matrix_sin, axis=-1),
-      jnp.expand_dims(a=season_matrix_cos, axis=-1)
-  ],
-                                  axis=-1)
-
-  waves = (season_matrix * gamma_seasonality).sum(axis=2)
-  return waves.sum(axis=1)
-
-
 @functools.partial(jax.jit, static_argnums=[0, 1, 3])
 def calculate_seasonality(
     number_periods: int,
