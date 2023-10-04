@@ -39,7 +39,18 @@ import functools
 import itertools
 import logging
 import numbers
-from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
+from typing import (
+  Any,
+  Callable,
+  Dict,
+  Iterable,
+  Mapping,
+  MutableMapping,
+  Optional,
+  Sequence,
+  Tuple,
+  Union
+)
 
 from absl import logging
 import immutabledict
@@ -49,7 +60,6 @@ import numpy as np
 import numpyro
 from numpyro import distributions as dist
 from numpyro import infer
-
 
 from lightweight_mmm import models
 from lightweight_mmm import preprocessing
@@ -302,7 +312,8 @@ class LightweightMMM:
       media_prior: jnp.ndarray,
       target: jnp.ndarray,
       extra_features: Optional[jnp.ndarray] = None,
-      doms: Optional[jnp.ndarray] = None,
+      dates: Optional[Iterable] = None,
+      #doms: Optional[jnp.ndarray] = None,
       degrees_seasonality: int = 2,
       seasonality_frequency: int = 52,
       weekday_seasonality: bool = False,
@@ -398,14 +409,8 @@ class LightweightMMM:
                    "(weekly), please check you made the right seasonality "
                    "choices.")
       
-    # transform_prior_function = (
-    #   models._get_transform_default_priors
-    #   if not self.transform_hyperprior
-    #   else models._get_transform_default_hyperprior_priors
-    # )
-    
-    if doms is not None:
-      doms = jnp.array(doms)
+    if dates is not None:
+      doms = jnp.array([int(dt.strftime('%d')) for dt in dates])
 
     if extra_features is not None:
       extra_features = jnp.array(extra_features)
@@ -436,7 +441,6 @@ class LightweightMMM:
         degrees_seasonality=degrees_seasonality,
         frequency=seasonality_frequency,
         transform_function=self._model_transform_function,
-        #transform_prior_function=transform_prior_function,
         transform_hyperprior=self.transform_hyperprior,
         weekday_seasonality=weekday_seasonality,
         custom_priors=custom_priors,
@@ -466,6 +470,7 @@ class LightweightMMM:
     self._transform_kwargs = transform_kwargs
     self.media = media
     self.doms = doms
+    self.dates = dates
     self._extra_features = extra_features# jax-devicearray
     self._mcmc = mcmc
     logging.info("Model has been fitted")
@@ -490,10 +495,8 @@ class LightweightMMM:
       media_prior: jnp.ndarray,
       degrees_seasonality: int,
       frequency: int,
-      #transform_kwargs,
       transform_function: Callable[[Any], jnp.ndarray],
       transform_hyperprior: bool,
-      #transform_prior_function,
       weekday_seasonality: bool,
       model: Callable[[Any], None],
       posterior_samples: Dict[str, jnp.ndarray],
@@ -608,6 +611,10 @@ class LightweightMMM:
     if doms is not None:
       full_doms = jnp.concatenate(arrays=[previous_doms, doms], axis=0)
     else:
+      if previous_doms is not None:
+        raise ValueError(
+          'This model requires doms, as was trained with them.'
+        )
       full_doms = None
     if extra_features is not None:
       full_extra_features = jnp.concatenate(
