@@ -216,7 +216,7 @@ def _carryover_convolve(data: jnp.ndarray,
 
 #Staticed out as used in jnp.arange (fails with dynamic)
 @functools.partial(jax.jit, static_argnames=("number_lags",))
-def carryover_original(data: jnp.ndarray,
+def carryover(data: jnp.ndarray,
               ad_effect_retention_rate: jnp.ndarray,
               peak_effect_delay: jnp.ndarray,
               number_lags: int = 30,
@@ -240,6 +240,7 @@ def carryover_original(data: jnp.ndarray,
     The carryover values for the given data with the given parameters.
   """
   #number_lags = 60
+  ad_effect_retention_rate = ad_effect_retention_rate * AD_EFFECT_RETENTION_LIMIT
   lags_arange = jnp.expand_dims(jnp.arange(number_lags, dtype=jnp.float32),
                                 axis=-1)
   weights = ad_effect_retention_rate**((lags_arange - peak_effect_delay)**2)
@@ -256,8 +257,9 @@ def carryover_original(data: jnp.ndarray,
     for i in range(data.shape[1])
   ], axis=1) / weights.sum(axis=0).reshape(1, -1)
 
+# Faster, but jax.scipy.fftconvolve is not accessible in python 3.7
 @functools.partial(jax.jit, static_argnames=('number_lags',))
-def carryover(
+def carryover_310(
   data: jnp.ndarray,
   ad_effect_retention_rate: jnp.ndarray,
   peak_effect_delay: jnp.ndarray,
