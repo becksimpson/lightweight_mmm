@@ -1168,7 +1168,7 @@ def calculate_media_effects(
 
   # In case of daily data, number of lags should be 13*7.
   transform_kwargs = transform_kwargs or {}
-  if transform_function in carryover_models:
+  if transform_function in carryover_models and 'number_lags' not in transform_kwargs:
     transform_kwargs['number_lags'] = 13 if frequency == 52 else 180# 120
 
   media_transformed = apply_media_transform_function(

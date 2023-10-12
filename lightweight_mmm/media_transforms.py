@@ -239,7 +239,7 @@ def carryover(data: jnp.ndarray,
   Returns:
     The carryover values for the given data with the given parameters.
   """
-  #number_lags = 60
+  number_lags = min(number_lags, int(0.5 * data.shape[0]))
   ad_effect_retention_rate = ad_effect_retention_rate * AD_EFFECT_RETENTION_LIMIT
   lags_arange = jnp.expand_dims(jnp.arange(number_lags, dtype=jnp.float32),
                                 axis=-1)
