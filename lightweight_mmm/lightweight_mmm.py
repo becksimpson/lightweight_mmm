@@ -72,7 +72,10 @@ Prior = Union[
     float
 ]
 
-
+Bound = Union[
+  Dict[int, Tuple[float]],
+  Tuple[float]
+]
 
 _MODEL_FUNCTION = models.media_mix_model
 
@@ -159,10 +162,16 @@ class LightweightMMM:
       init=False, repr=False, hash=False, compare=True)
   extra_features_names: Sequence[str] = dataclasses.field(
       init=False, repr=False, hash=False, compare=True)
+  control_features_names: Sequence[str] = dataclasses.field(
+    init=False, repr=False, hash=False, compare=False
+  )
   trace: Dict[str, jax.Array] = dataclasses.field(
       init=False, repr=False, hash=False, compare=False)
   custom_priors: MutableMapping[str, Prior] = dataclasses.field(
       init=False, repr=False, hash=False, compare=True)
+  bounds: MutableMapping[str, Bound] = dataclasses.field(
+    init=False, repr=False, hash=False, compare=True
+  )
   _degrees_seasonality: int = dataclasses.field(init=False, repr=False)
   _weekday_seasonality: bool = dataclasses.field(init=False, repr=False)
   _media_prior: jax.Array = dataclasses.field(
@@ -267,7 +276,8 @@ class LightweightMMM:
     # Checking that the key is contained in custom_priors has already been done
     # at this point in the fit function.
     for prior_name in custom_priors:
-      if prior_name in [_COEF_EXTRA_FEATURES]:
+      # Custom processing of bounds for extra features and coef_media
+      if prior_name in [_COEF_EXTRA_FEATURES, 'coef_media']:
         continue
       if prior_name not in default_priors:
         print(f'Ignoring Custom Prior `{prior_name}` does not appear in model')
@@ -313,7 +323,6 @@ class LightweightMMM:
       target: jnp.ndarray,
       extra_features: Optional[jnp.ndarray] = None,
       dates: Optional[Iterable] = None,
-      #doms: Optional[jnp.ndarray] = None,
       degrees_seasonality: int = 2,
       seasonality_frequency: int = 52,
       weekday_seasonality: bool = False,
@@ -326,6 +335,7 @@ class LightweightMMM:
       init_strategy: Callable[[Mapping[Any, Any], Any],
                               jnp.ndarray] = numpyro.infer.init_to_median,
       custom_priors: Optional[Dict[str, Prior]] = None,
+      #bounds: Optional[Dict[str, Bound]] = None,
       seed: Optional[int] = None,
       transform_kwargs: Mapping[str, Any] = None,
       progress_bar:bool=False
@@ -383,10 +393,9 @@ class LightweightMMM:
     else:
       self.media_names = [f"channel_{i}" for i in range(media.shape[1])]
 
-
-    if custom_priors:
+    if custom_priors is not None:
       not_used_custom_priors = set(custom_priors.keys()).difference(
-          self._prior_names)
+          [*self._prior_names, 'coef_media'])
       if not_used_custom_priors:
         raise ValueError(
             "The following passed custom priors dont have a match in the model."
@@ -403,6 +412,7 @@ class LightweightMMM:
             "priors for national model or pass media data with geo dimension.")
     else:
       custom_priors = {}
+    #bounds = bounds or {}
 
     if weekday_seasonality and seasonality_frequency == 52:
       logging.warn("You have chosen daily seasonality and frequency 52 "
@@ -411,6 +421,8 @@ class LightweightMMM:
       
     if dates is not None:
       doms = jnp.array([int(dt.strftime('%d')) for dt in dates])
+    else:
+      doms = None
 
     if extra_features is not None:
       extra_features = jnp.array(extra_features)
@@ -444,15 +456,18 @@ class LightweightMMM:
         transform_hyperprior=self.transform_hyperprior,
         weekday_seasonality=weekday_seasonality,
         custom_priors=custom_priors,
+        #bounds=bounds,
         transform_kwargs=transform_kwargs
       )
 
     self.custom_priors = custom_priors
+    #self.bounds = bounds
 
     if extra_features_names is not None or extra_features is None:
       self.extra_features_names = extra_features_names
     else:
       self.extra_features_names = [f"extra_channel_{i}" for i in range(extra_features.shape[1])]
+
     self.n_media_channels = media.shape[1]
     self.n_geos = media.shape[2] if media.ndim == 3 else 1
     self._media_prior = media_prior
@@ -501,6 +516,7 @@ class LightweightMMM:
       model: Callable[[Any], None],
       posterior_samples: Dict[str, jnp.ndarray],
       custom_priors: Dict[str, Prior],
+      #bounds: Dict[str, Bound],
       **transform_kwargs
       ) -> Dict[str, jnp.ndarray]:
     """Encapsulates the numpyro.infer.Predictive function for predict method.
@@ -540,6 +556,7 @@ class LightweightMMM:
             transform_kwargs=transform_kwargs,
             #transform_prior_function=transform_prior_function,
             custom_priors=custom_priors,
+            #bounds=bounds,
             weekday_seasonality=weekday_seasonality)
 
   def predict(
@@ -595,6 +612,7 @@ class LightweightMMM:
                 jnp.zeros((media_gap.shape[0], *self._extra_features.shape[1:]))
             ],
             axis=0)
+
       if doms is not None:
         previous_doms = jnp.concatenate(
           arrays=[
@@ -621,6 +639,7 @@ class LightweightMMM:
           arrays=[previous_extra_features, extra_features], axis=0)
     else:
       full_extra_features = None
+
     if seed is None:
       seed = utils.get_time_seed()
     prediction = self._predict(
@@ -638,6 +657,7 @@ class LightweightMMM:
         #transform_prior_function=self._transform_prior_function,
         model=self._model_function,
         custom_priors=self.custom_priors,
+        #bounds=self.bounds,
         posterior_samples=self.trace)["mu"][:, previous_media.shape[0]:]
     if target_scaler:
       prediction = target_scaler.inverse_transform(prediction)

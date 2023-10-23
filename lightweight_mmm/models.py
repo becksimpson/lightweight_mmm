@@ -39,6 +39,7 @@ from typing import (
   Optional,
   Sequence,
   Set,
+  Tuple,
   Union
 )
 
@@ -58,6 +59,10 @@ Prior = Union[
     Dict[str, float],
     Sequence[float],
     float
+]
+Bound = Union[
+  Dict[int, Tuple[float]],
+  Tuple[float]
 ]
 
 class TransformFunction(Protocol):
@@ -83,6 +88,7 @@ _MULTIPLIER_DAY_OF_MONTH = 'multiplier_dayofmonth'
 _MEDIA_TRANSFORM_WEIGHTS = 'media_transform_weights'
 _MODEL_WEIGHTS = 'model_weights'
 _DEGREES_FREEDOM = 'degrees_freedom'
+_COEF_MEDIA = 'coef_media'
 
 MODEL_PRIORS_NAMES = frozenset((
     _INTERCEPT,
@@ -113,18 +119,18 @@ def _get_default_priors() -> Mapping[str, Prior]:
   # Since JAX cannot be called before absl.app.run in tests we get default
   # priors from a function.
   return immutabledict.immutabledict({
-      _INTERCEPT: dist.HalfNormal(scale=0.5),
+      _INTERCEPT: dist.HalfNormal(scale=0.2),
       _COEF_TREND: dist.HalfNormal(scale=0.005),# dist.Normal(loc=0., scale=0.01),
       _EXPO_TREND: dist.Uniform(low=0.5, high=1.5),
-      _SIGMA: dist.Gamma(concentration=1., rate=1.),
+      _SIGMA: dist.Gamma(concentration=1., rate=1.0),
       _MODEL_SIGMA: dist.Gamma(concentration=1., rate=1.),
       _GAMMA_SEASONALITY: dist.Normal(loc=0., scale=.05),
-      _WEEKDAY: dist.Normal(loc=0., scale=.1),
-      #_COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.2),
-      _COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.2),
-      _COEF_SEASONALITY: dist.HalfNormal(scale=.5),
-      _PARAM_DAY_OF_MONTH: dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),
-      _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(0.1),
+      _WEEKDAY: dist.Normal(loc=0., scale=.5),
+      _COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.01),
+      #_COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.1),
+      _COEF_SEASONALITY: dist.HalfNormal(scale=.1),
+      _PARAM_DAY_OF_MONTH: dist.TruncatedNormal(loc=1.0, scale=0.5, low=0.1, high=10.0),
+      _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(0.05),
       _MODEL_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
       _MEDIA_TRANSFORM_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
       #_DEGREES_FREEDOM: dist.Gamma(concentration=25., rate=0.5),
@@ -283,6 +289,26 @@ def _get_transform_prior_hyperprior_distribution(
     concentration1= 9 - hyperprior_samples['concentration'],
     concentration0= 1 + hyperprior_samples['concentration'],
   )
+
+
+# def create_bounds(
+#   bounds: MutableMapping[str, Bound],
+#   param_name: str,
+#   n: int,
+#   positive: bool = False
+# ):
+#   if bounds is None or param_name not in bounds:
+#     return None, None
+  
+#   min_bound = 0 if positive else -1e6
+  
+#   return jnp.array([
+#     bounds[param_name].get(i, min_bound)
+#     for i in jnp.arange(n)
+#   ]), jnp.array([
+#     bounds[param_name].get(i, 1e6)
+#     for i in jnp.arange(n)
+#   ])
 
 # Ensemble MMM - Adstock / Saturation Functions + Parameters used.
 _ENSEMBLE_ADSTOCK_TRANSFORMS = immutabledict.immutabledict({
@@ -795,7 +821,7 @@ def _generate_extra_features_custom_priors(
     else:
       raise ValueError('Cannot make a bounded non-normal distribution')
     for p in ['low', 'high']:
-      vals = jnp.ones(n_extra_features)
+      vals = jnp.ones(n_extra_features) * (-10 if p == 'low' else 10)
       for i, v in ef_cp.get(p, {}).items():
         vals = vals.at[i].set(v)
       dt[p] = vals
@@ -1126,6 +1152,7 @@ def calculate_media_effects(
     transform_function: TransformFunction,
     transform_hyperprior: bool,
     custom_priors: MutableMapping[str, Prior],
+    #bounds: MutableMapping[str, Bound],
     frequency: int,
     transform_kwargs: Dict,
     target_data: jnp.ndarray,
@@ -1244,21 +1271,32 @@ def calculate_media_effects(
           size=n_channels,
           dim=-2 if media_data.ndim == 3 else -1):
         
-        lower_bounds = jnp.ones(len(media_prior)) * 0.25
-        upper_bounds = jnp.ones(len(media_prior)) * 4.0
-        # I don't want bounds for visitor channels
-        # TODO Extra channels total may not always be 6, 
-        n_extra_channels = 6 - extra_features.shape[1]
-        upper_bounds = upper_bounds.at[-n_extra_channels:].set(10.0)
-        lower_bounds = lower_bounds.at[-n_extra_channels:].set(0.0)
+        # lower_bounds = jnp.ones(len(media_prior)) * 0.25
+        # upper_bounds = jnp.ones(len(media_prior)) * 4.0
+        # # I don't want bounds for visitor channels
+        # # TODO Extra channels total may not always be 6, 
+        # n_extra_channels = 6 - extra_features.shape[1]
+        # upper_bounds = upper_bounds.at[-n_extra_channels:].set(10.0)
+        # lower_bounds = lower_bounds.at[-n_extra_channels:].set(0.0)
+
+        # lower_bounds, upper_bounds = create_bounds(
+        #   bounds, 'coef_media', len(media_prior), positive=True
+        # )
+        if 'coef_media' in custom_priors:
+          lower_bounds = custom_priors['coef_media']['low']
+          upper_bounds = custom_priors['coef_media']['high']
+        else:
+          lower_bounds = upper_bounds =  None
+
         coef_media = numpyro.sample(
             name="channel_coef_media_models" if media_data.ndim == 3 else "coef_media_models",
-            #fn=_generate_media_prior_distribution(media_prior)
             fn= dist.TruncatedNormal(
               loc=0.0,
               scale=media_prior,
-              low=lower_bounds * media_prior,
-              high=upper_bounds * media_prior
+              low=lower_bounds,
+              high=upper_bounds
+              #low=lower_bounds * media_prior,
+              #high=upper_bounds * media_prior
             )
           )#)
         if media_data.ndim == 3:
@@ -1350,7 +1388,8 @@ def media_mix_model(
     transform_kwargs: Optional[MutableMapping[str, Any]] = None,
     doms: Optional[jnp.ndarray] = None,
     weekday_seasonality: bool = False,
-    extra_features: Optional[jnp.array] = None
+    extra_features: Optional[jnp.array] = None,
+    #bounds: Optional[Dict[str, Dict[int, Tuple[float]]]] = None
     ) -> None:
   """Media mix model.
 
@@ -1412,6 +1451,7 @@ def media_mix_model(
     extra_features_effects = calculate_extra_features_effects(
       extra_features,
       custom_priors,
+      #bounds,
       geo_shape
     )
 
@@ -1422,13 +1462,14 @@ def media_mix_model(
     transform_function,
     transform_hyperprior,
     custom_priors,
+    #bounds,
     frequency,
     transform_kwargs,
     target_data,
     intercept,
     seasonal_effects,
     trend_effects,
-    extra_features_effects
+    extra_features_effects,
   )
 
   prediction = (

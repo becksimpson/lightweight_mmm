@@ -1820,7 +1820,7 @@ def plot_prior_and_posterior(
             if idx == i_feature:
               dd[p] = v
         if dd:
-          if 'low' in dd and prior_distribution.__class__ == numpyro.distributions.HalfNormal:
+          if 'low' in dd and prior_distribution.__class__ in [numpyro.distributions.HalfNormal, numpyro.distributions.Normal]:
             print(dd)
             prior_distribution = numpyro.distributions.TruncatedNormal(**dd)
           else:
