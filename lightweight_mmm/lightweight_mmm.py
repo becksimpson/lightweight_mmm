@@ -162,16 +162,16 @@ class LightweightMMM:
       init=False, repr=False, hash=False, compare=True)
   extra_features_names: Sequence[str] = dataclasses.field(
       init=False, repr=False, hash=False, compare=True)
-  control_features_names: Sequence[str] = dataclasses.field(
-    init=False, repr=False, hash=False, compare=False
-  )
+  # control_features_names: Sequence[str] = dataclasses.field(
+  #   init=False, repr=False, hash=False, compare=False
+  # )
   trace: Dict[str, jax.Array] = dataclasses.field(
       init=False, repr=False, hash=False, compare=False)
   custom_priors: MutableMapping[str, Prior] = dataclasses.field(
       init=False, repr=False, hash=False, compare=True)
-  bounds: MutableMapping[str, Bound] = dataclasses.field(
-    init=False, repr=False, hash=False, compare=True
-  )
+  # bounds: MutableMapping[str, Bound] = dataclasses.field(
+  #   init=False, repr=False, hash=False, compare=True
+  # )
   _degrees_seasonality: int = dataclasses.field(init=False, repr=False)
   _weekday_seasonality: bool = dataclasses.field(init=False, repr=False)
   _media_prior: jax.Array = dataclasses.field(
