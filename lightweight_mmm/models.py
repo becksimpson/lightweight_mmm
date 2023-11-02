@@ -23,6 +23,7 @@ three different models.
 """
 import functools
 from itertools import chain
+import logging
 import sys
 #  pylint: disable=g-import-not-at-top
 if sys.version_info >= (3, 8):
@@ -53,6 +54,8 @@ from numpyro import distributions as dist
 from numpyro.contrib.control_flow import cond
 
 from lightweight_mmm import media_transforms
+
+logger = logging.getLogger('mmm')
 
 Prior = Union[
     dist.Distribution,
@@ -120,22 +123,68 @@ def _get_default_priors() -> Mapping[str, Prior]:
   # priors from a function.
   return immutabledict.immutabledict({
       _INTERCEPT: dist.HalfNormal(scale=0.5),
-      _COEF_TREND: dist.HalfNormal(scale=0.005),# dist.Normal(loc=0., scale=0.01),
+      _COEF_TREND: dist.HalfNormal(scale=0.005),
       _EXPO_TREND: dist.Uniform(low=0.5, high=1.5),
       _SIGMA: dist.Gamma(concentration=1., rate=1.),
       _MODEL_SIGMA: dist.Gamma(concentration=1., rate=1.),
       _GAMMA_SEASONALITY: dist.Normal(loc=0., scale=.05),
-      _WEEKDAY: dist.Normal(loc=0., scale=.1),
-      _COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.2),
+      _WEEKDAY: dist.TruncatedNormal(loc=0., scale=.1),
+      #_COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.1),
       #_COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.2), 
-      #_COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.1),
+      _COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.2),
       _COEF_SEASONALITY: dist.HalfNormal(scale=.5),
-      _PARAM_DAY_OF_MONTH: dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),# low=0.1, high=10.0),
-      _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(0.1),
+      _PARAM_DAY_OF_MONTH: dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),# dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),# low=0.1, high=10.0),
+      _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(scale=0.1),
       _MODEL_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
       _MEDIA_TRANSFORM_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
       #_DEGREES_FREEDOM: dist.Gamma(concentration=25., rate=0.5),
   })
+
+def _get_default_priors_constrained() -> Mapping[str, Prior]:
+  """ Get Default Priors for key model parameters (non-media transforms)"""
+  # Since JAX cannot be called before absl.app.run in tests we get default
+  # priors from a function.
+  return immutabledict.immutabledict({
+      _INTERCEPT: dist.TruncatedNormal(loc=0.0, scale=0.2, low=0., high=.3),
+      _COEF_TREND: dist.TruncatedNormal(loc=0.0, scale=0.0005, low=0, high=0.005),# dist.Normal(loc=0., scale=0.01),
+      _EXPO_TREND: dist.TruncatedNormal(loc=0.9, scale=0.05, low=0.7, high=1.3), #dist.Uniform(low=0.5, high=1.5),
+      _SIGMA: dist.Gamma(concentration=1., rate=1.),
+      _MODEL_SIGMA: dist.Gamma(concentration=1., rate=1.),
+      _GAMMA_SEASONALITY: dist.TruncatedNormal(loc=0., scale=.02, high=0.1, low=-0.1),
+      _WEEKDAY: dist.TruncatedNormal(loc=0., scale=.1, high=0.5, low=-0.5),
+      #_COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.1),
+      #_COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.2), 
+      _COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.1),
+      _COEF_SEASONALITY: dist.HalfNormal(scale=.5),
+      _PARAM_DAY_OF_MONTH: dist.Uniform(low=0.75, high=1.5),# dist.TruncatedNormal(loc=1.0, scale=0.2, low=0.5, high=2.0),# dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),# low=0.1, high=10.0),
+      _MULTIPLIER_DAY_OF_MONTH: dist.TruncatedNormal(loc=0., scale=.01, low=1e-6, high=0.05), #dist.HalfNormal(scale=0.1)
+      _MODEL_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
+      _MEDIA_TRANSFORM_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
+      #_DEGREES_FREEDOM: dist.Gamma(concentration=25., rate=0.5),
+  })
+
+# def _get_default_priors() -> Mapping[str, Prior]:
+#   """ Get Default Priors for key model parameters (non-media transforms)"""
+#   # Since JAX cannot be called before absl.app.run in tests we get default
+#   # priors from a function.
+#   return immutabledict.immutabledict({
+#       _INTERCEPT: dist.TruncatedNormal(loc=0.0, scale=0.2, low=0., high=.3),
+#       _COEF_TREND: dist.TruncatedNormal(loc=0.0, scale=0.0005, low=0, high=0.005),# dist.Normal(loc=0., scale=0.01),
+#       _EXPO_TREND: dist.TruncatedNormal(loc=0.9, scale=0.05, low=0.7, high=1.3), #dist.Uniform(low=0.5, high=1.5),
+#       _SIGMA: dist.Gamma(concentration=1., rate=1.),
+#       _MODEL_SIGMA: dist.Gamma(concentration=1., rate=1.),
+#       _GAMMA_SEASONALITY: dist.TruncatedNormal(loc=0., scale=.02, high=0.1, low=-0.1),
+#       _WEEKDAY: dist.TruncatedNormal(loc=0., scale=.1, high=0.5, low=-0.5),
+#       #_COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.1),
+#       #_COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.2), 
+#       _COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.1),
+#       _COEF_SEASONALITY: dist.HalfNormal(scale=.5),
+#       _PARAM_DAY_OF_MONTH: dist.Uniform(low=0.75, high=1.5),# dist.TruncatedNormal(loc=1.0, scale=0.2, low=0.5, high=2.0),# dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),# low=0.1, high=10.0),
+#       _MULTIPLIER_DAY_OF_MONTH: dist.TruncatedNormal(loc=0., scale=.01, low=1e-6, high=0.05), #dist.HalfNormal(scale=0.1)
+#       _MODEL_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
+#       _MEDIA_TRANSFORM_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
+#       #_DEGREES_FREEDOM: dist.Gamma(concentration=25., rate=0.5),
+#   })
 
 
 def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union[float, Prior]]]:
@@ -159,7 +208,7 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
     # Carryover delay to peak (halfnormal)
     _PEAK_EFFECT_DELAY: immutabledict.immutabledict({
         # Median 1.6, <1 27%, longtail
-        'scale': dist.TruncatedNormal(0.0, 1.0, low=0.5, high=3.0)
+        'scale': dist.TruncatedNormal(0.0, 1.0, low=0.0, high=3.0)
     }),
     # Hill saturation (gamma) create range 0.1 -> 2/3ish, 0.1 -> 1.0 peak
     _SLOPE: immutabledict.immutabledict({
@@ -997,6 +1046,7 @@ def calculate_seasonal_effects(
       degrees=degrees_seasonality,
       frequency=frequency,
       gamma_seasonality=gamma_seasonality)
+  logger.debug(f'DOY Seasonality: {gamma_seasonality}, {seasonality.min()} {seasonality.max()}')
   
 
   # Day of Month Seasonality - Beta Distribution x Multiplier
@@ -1017,6 +1067,7 @@ def calculate_seasonal_effects(
       name = 'dom_seasonality',
       value = dom_series - dom_series.min()
     )
+    logger.debug(f'DOM Params: {dom_multiplier}, {dom_param}, DOM Range: {dom_series.max()}, {dom_series.min()}')
   # Day of Week Seasonality
   if weekday_seasonality:
     with numpyro.plate(name=f"{_WEEKDAY}_plate", size=6):
@@ -1030,6 +1081,7 @@ def calculate_seasonal_effects(
       name='weekday_seasonality',
       value=weekday[jnp.arange(data_size) % 7]
     )
+    logger.debug(f'Weekday: {weekday_series.max()}')
 
   # Extensions to account for n_geos.
   coef_seasonality = 1
@@ -1049,10 +1101,12 @@ def calculate_seasonal_effects(
   total_seasonality = (
     seasonality * coef_seasonality
   )
+  
   total_seasonality = numpyro.deterministic(
     name='year_seasonality',
     value=total_seasonality - total_seasonality.min()
   )
+  logger.debug(f'Total seasonality: {total_seasonality.max()}')
   if doms is not None:
     total_seasonality += dom_series
   if weekday_seasonality:
@@ -1092,13 +1146,19 @@ def calculate_trend_effects(
       fn=custom_priors.get(
           _EXPO_TREND, default_priors[_EXPO_TREND]))
 
+  logger.debug(f'Trends:{coef_trend}, {expo_trend}')
   # For national model's case
   trend = jnp.arange(data_size)
   if media_data.ndim == 3:  # For geo model's case
     trend = jnp.expand_dims(trend, axis=-1)
 
+  # Clip to stop runaway fits
   total_trend = coef_trend * trend ** expo_trend
+  logger.debug(f'total trend max : {total_trend.max()}, {coef_trend}, {expo_trend}')
 
+  # total_trend = jnp.clip(coef_trend * trend ** expo_trend, a_max=1.0)
+
+  
   # Total trend (to aid in re-distribution later)
   return numpyro.deterministic(
     name='total_trend',
@@ -1148,7 +1208,7 @@ def calculate_extra_features_effects(
 
 def calculate_media_effects(
     media_data: jnp.ndarray,
-    extra_features: jnp.ndarray,
+    #extra_features: jnp.ndarray,
     media_prior: jnp.ndarray,
     transform_function: TransformFunction,
     transform_hyperprior: bool,
@@ -1301,6 +1361,7 @@ def calculate_media_effects(
             )
           )#)
         if media_data.ndim == 3:
+          raise ValueError('No longer implemented')
           with numpyro.plate(
               name="geo_media_plate",
               size=n_geos,
@@ -1320,6 +1381,8 @@ def calculate_media_effects(
 
     media_contribution = jnp.einsum(media_einsum, media_transformed, coef_media)
 
+    logger.debug(f'Coef Media: {coef_media}')
+
     n_models = len(_ENSEMBLE_ADSTOCK_TRANSFORMS) * len(_ENSEMBLE_SATURATION_TRANSFORMS)
 
     with numpyro.plate(name=F'{_MODEL_WEIGHTS}_plate', size=n_models):
@@ -1337,6 +1400,8 @@ def calculate_media_effects(
       value=weights / (n_models / 2)
     )
 
+    logger.debug(F'Model Weights: {weights}')
+
     channel_einsum = "mtc, m -> tc"
     channel_contribution = numpyro.deterministic(
       name='channel_contribution',
@@ -1352,6 +1417,9 @@ def calculate_media_effects(
         extra_features_effects
       )
     )
+
+    logger.debug(f'Channels: {channel_contribution.shape} {channel_contribution.mean(axis=0)}')
+    logger.debug(f'Model Sigma: {model_sigma}')
 
     # Division by n_models to make weight of ensemble model 50%
     _ = numpyro.sample(
@@ -1373,6 +1441,7 @@ def calculate_media_effects(
       name = 'media_contribution',
       value = channel_contribution.sum(axis=-1)
     )
+    logger.debug(f'Submodel predictions {model_predictions.mean(axis=1)}')
 
     return media_effects
 
@@ -1458,7 +1527,7 @@ def media_mix_model(
 
   media_effects = calculate_media_effects(
     media_data,
-    extra_features,
+    #extra_features,
     media_prior,
     transform_function,
     transform_hyperprior,
@@ -1473,13 +1542,20 @@ def media_mix_model(
     extra_features_effects,
   )
 
+  logger.debug(f'Seasonal effects: {seasonal_effects.mean()}, {seasonal_effects.max()}')
+  logger.debug(f'Intercept: {intercept}')
+  logger.debug(f'Trend Effects:  {trend_effects.max()}')
+  logger.debug(f'Media Effects: {media_effects.min()}, {media_effects.mean()}, {media_effects.max()}')
+  logger.debug(f'Extra features Effects: {extra_features_effects.mean()}, {extra_features_effects.max()}')
   prediction = (
     intercept + seasonal_effects + trend_effects + 
     media_effects
     + extra_features_effects
   )
+  logger.debug(f'Prediction: {prediction.min()}, {prediction.mean()}, {prediction.max()}')
 
   mu = numpyro.deterministic(name="mu", value=prediction)
+
 
   # with numpyro.plate(name=f"{_DEGREES_FREEDOM}_plate", size=n_geos):
   #   degrees_freedom = numpyro.sample(
@@ -1494,3 +1570,4 @@ def media_mix_model(
     fn=dist.Normal(loc=mu, scale=sigma),
     obs=target_data
   )
+  logger.debug('Sampled from target data observation')

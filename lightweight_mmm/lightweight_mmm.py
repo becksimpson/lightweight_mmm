@@ -420,7 +420,7 @@ class LightweightMMM:
                    "choices.")
       
     if dates is not None:
-      doms = jnp.array([int(dt.strftime('%d')) for dt in dates])
+      doms = jnp.array([float(dt.strftime('%d')) for dt in dates])
     else:
       doms = None
 
