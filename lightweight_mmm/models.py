@@ -127,9 +127,10 @@ def _get_default_priors() -> Mapping[str, Prior]:
       _GAMMA_SEASONALITY: dist.Normal(loc=0., scale=.05),
       _WEEKDAY: dist.Normal(loc=0., scale=.1),
       _COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.2),
+      #_COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.2), 
       #_COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.1),
       _COEF_SEASONALITY: dist.HalfNormal(scale=.5),
-      _PARAM_DAY_OF_MONTH: dist.TruncatedNormal(loc=1.0, scale=0.5, low=0.1, high=10.0),
+      _PARAM_DAY_OF_MONTH: dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),# low=0.1, high=10.0),
       _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(0.1),
       _MODEL_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
       _MEDIA_TRANSFORM_WEIGHTS: dist.Beta(concentration1=1.0, concentration0=1.0),
@@ -821,7 +822,7 @@ def _generate_extra_features_custom_priors(
     else:
       raise ValueError('Cannot make a bounded non-normal distribution')
     for p in ['low', 'high']:
-      vals = jnp.ones(n_extra_features) * (-10 if p == 'low' else 10)
+      vals = jnp.ones(n_extra_features) * (-1 if p == 'low' else 1)
       for i, v in ef_cp.get(p, {}).items():
         vals = vals.at[i].set(v)
       dt[p] = vals
