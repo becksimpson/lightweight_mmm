@@ -117,9 +117,13 @@ def logistic_saturation(
     data: Input data.
     saturation: Controls the saturation, higher slope, stronger saturation
   """
+
   # TODO: Used with scaled beta
   saturation = 1.0 + saturation * 3.0
   log_data = (1.0 - jnp.exp(-saturation * data)) / (1.0 + jnp.exp(-saturation * data))
+  
+  return log_data
+  
   one_norm = (1.0 - jnp.exp(-saturation)) / (1.0 + jnp.exp(-saturation))
   
   return jax.lax.cond(
@@ -154,9 +158,16 @@ def hill_constrained(data: jnp.ndarray,
   # Range 0.5 --> 3.0
   slope = slope_constrained * 2.5 + 0.5
 
+  exponent_safe = (jnp.clip(data, a_min=1e-6) / half_max_effective_concentration) ** (-slope)
+  hill_media = 1. / (1 + exponent_safe)
+  return jnp.where(condition=(data==0.), x=0., y=hill_media)
+
   save_transform = apply_exponent_safe(
       data=data / half_max_effective_concentration, exponent=-slope)
-  hill_media = jnp.where(save_transform == 0, x=0, y=1. / (1 + save_transform))
+  
+  hill_media = jnp.where(data == 0, x=0, y=1. / (1. + save_transform)) 
+
+  return hill_media
 
   return jax.lax.cond(
     hill_normalise,
@@ -295,7 +306,10 @@ def apply_exponent_safe(
 
   More info on the double jnp.where can be found:
   https://github.com/tensorflow/probability/blob/main/discussion/where-nan.pdf
-
+  tf.where(x_ok, f(tf.where(x_ok, x, safe_x), safe_f(x))
+  Instead of:
+  tf.where(x_ok, f(x), safe_f(x))
+  
   Args:
     data: Input data to use.
     exponent: Exponent required for the operations.
@@ -303,5 +317,8 @@ def apply_exponent_safe(
   Returns:
     The result of the exponent operation with the inputs provided.
   """
-  exponent_safe = jnp.where(condition=(data == 0), x=1, y=data) ** exponent
-  return jnp.where(condition=(data == 0), x=0, y=exponent_safe)
+  # exponent_safe = jnp.where(condition=(data == 0), x=1, y=data) ** exponent
+  # return jnp.where(condition=(data == 0), x=0, y=exponent_safe)
+
+  exponent_safe = jnp.where(condition=(data != 0), x=data, y=1) ** exponent
+  return jnp.where(condition=(data != 0), x=exponent_safe, y=0)

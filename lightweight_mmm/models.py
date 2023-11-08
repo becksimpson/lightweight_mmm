@@ -131,7 +131,7 @@ def _get_default_priors() -> Mapping[str, Prior]:
       _WEEKDAY: dist.TruncatedNormal(loc=0., scale=.1),
       #_COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.1),
       #_COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.2), 
-      _COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.1),
+      _COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.05),
       _COEF_SEASONALITY: dist.HalfNormal(scale=.5),
       _PARAM_DAY_OF_MONTH: dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),# dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),# low=0.1, high=10.0),
       _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(scale=0.1),
@@ -1260,6 +1260,11 @@ def calculate_media_effects(
   if transform_function in carryover_models and 'number_lags' not in transform_kwargs:
     transform_kwargs['number_lags'] = 13 if frequency == 52 else 180# 120
 
+  # media_transformed = jnp.repeat(
+  #   jnp.expand_dims(media_data, 0),
+  #   repeats=4,
+  #   axis=0
+  # )
   media_transformed = apply_media_transform_function(
     transform_function,
     media_data,
@@ -1272,6 +1277,7 @@ def calculate_media_effects(
     name="media_transformed",
     value=media_transformed
   )
+
   if transform_function.__name__ not in [transform_ensemble_multi.__name__]:
 
     with numpyro.plate(
@@ -1418,6 +1424,7 @@ def calculate_media_effects(
         extra_features_effects
       )
     )
+    
 
     logger.debug(f'Channels: {channel_contribution.shape} {channel_contribution.mean(axis=0)}')
     logger.debug(f'Model Sigma: {model_sigma}')
@@ -1438,6 +1445,7 @@ def calculate_media_effects(
       )) if target_data is not None else None
     )
 
+    
     media_effects = numpyro.deterministic(
       name = 'media_contribution',
       value = channel_contribution.sum(axis=-1)

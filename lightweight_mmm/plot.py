@@ -1731,7 +1731,6 @@ def plot_prior_and_posterior(
           #   hyp: media_mix_model.trace[feature+'_'+hyp].mean()
           #   for hyp in feature_hyperpriors
           # }
-          print(f'Mean Hyperpriors for {feature} is {mean_hyperprior_posterior_samples}')
           prior_distributions = [
             prior_cls(
               **mean_hyperprior_posterior_samples
@@ -1821,7 +1820,6 @@ def plot_prior_and_posterior(
               dd[p] = v
         if dd:
           if 'low' in dd and prior_distribution.__class__ in [numpyro.distributions.HalfNormal, numpyro.distributions.Normal]:
-            print(dd)
             prior_distribution = numpyro.distributions.TruncatedNormal(**dd)
           else:
             prior_distribution = prior_distribution.__class__(**dd)
@@ -1847,7 +1845,10 @@ def plot_prior_and_posterior(
     if feature in geo_level_features:
       for i_geo in range(media_mix_model.n_geos):
         subplot_title = f"{feature}, geo {i_geo}"
-        posterior_samples = np.array(media_mix_model.trace[feature][:, i_geo])
+        if len(media_mix_model.trace[feature].shape) > 1:
+          posterior_samples = np.array(media_mix_model.trace[feature][:, i_geo])
+        else:
+          posterior_samples = np.array(media_mix_model.trace[feature])
         (fig, gridspec_fig,
           i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
               posterior_samples=posterior_samples,
@@ -1887,7 +1888,6 @@ def plot_prior_and_posterior(
         if feature == 'coef_media_models':
           posterior_samples = np.array(
               media_mix_model.trace[feature][:, :, i_channel])
-          print(posterior_samples.shape)
           posterior_names = [f'model_{i}' for i in range(posterior_samples.shape[0])]
         else:
           posterior_samples = np.array(
