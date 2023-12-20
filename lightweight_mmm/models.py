@@ -131,7 +131,7 @@ def _get_default_priors() -> Mapping[str, Prior]:
       _WEEKDAY: dist.TruncatedNormal(loc=0., scale=.1),
       #_COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.1),
       #_COEF_EXTRA_FEATURES: dist.HalfNormal(scale=.2), 
-      _COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.05),
+      _COEF_EXTRA_FEATURES: dist.Normal(loc=0., scale=.01),
       _COEF_SEASONALITY: dist.HalfNormal(scale=.5),
       _PARAM_DAY_OF_MONTH: dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),# dist.TruncatedNormal(loc=1.0, scale=0.5, low=1e-6),# low=0.1, high=10.0),
       _MULTIPLIER_DAY_OF_MONTH: dist.HalfNormal(scale=0.1),
@@ -266,7 +266,7 @@ def _generate_media_prior_distribution(
   """
   if mode == 'beta':
     # Beta distributions can only model up to 1.
-    if mean > 0.33:
+    if jnp.any(mean > 0.33):
       raise ValueError(
         'For a mean > 0.33, a beta distribution is unsuitable as a ROI prior. Try Gamma'
       )
@@ -1014,6 +1014,7 @@ def calculate_seasonal_effects(
     frequency:int,
     weekday_seasonality: bool,
     custom_priors: MutableMapping[str, Prior],
+    transform_kwargs=None
 ) -> jnp.ndarray:
   """
   Calculate (s, n) target attributed to seasonal effects (DOW, DOM, DOY)
@@ -1046,7 +1047,9 @@ def calculate_seasonal_effects(
       number_periods=data_size,
       degrees=degrees_seasonality,
       frequency=frequency,
-      gamma_seasonality=gamma_seasonality)
+      gamma_seasonality=gamma_seasonality,
+      transform_kwargs=transform_kwargs
+  )
   logger.debug(f'DOY Seasonality: {gamma_seasonality}, {seasonality.min()} {seasonality.max()}')
   
 
@@ -1080,7 +1083,7 @@ def calculate_seasonal_effects(
 
     weekday_series = numpyro.deterministic(
       name='weekday_seasonality',
-      value=weekday[jnp.arange(data_size) % 7]
+      value=weekday[(jnp.arange(data_size) + (transform_kwargs or {}).get('dates_offset', 0)) % 7]
     )
     logger.debug(f'Weekday: {weekday_series.max()}')
 
@@ -1120,7 +1123,8 @@ def calculate_seasonal_effects(
 
 def calculate_trend_effects(
   media_data: jnp.ndarray,
-  custom_priors: Dict
+  custom_priors: Dict,
+  transform_kwargs: Dict = None
 ) -> jnp.ndarray:
   """
   Calculate (s, n) target attributed to trend effects,
@@ -1149,7 +1153,8 @@ def calculate_trend_effects(
 
   logger.debug(f'Trends:{coef_trend}, {expo_trend}')
   # For national model's case
-  trend = jnp.arange(data_size)
+  # Trend offset for when maintaining trend training on training.
+  trend = jnp.arange(data_size) + (transform_kwargs or {}).get('dates_offset', 0)
   if media_data.ndim == 3:  # For geo model's case
     trend = jnp.expand_dims(trend, axis=-1)
 
@@ -1221,7 +1226,8 @@ def calculate_media_effects(
     intercept: jnp.ndarray,
     seasonal_effects: jnp.ndarray,
     trend_effects: jnp.ndarray,
-    extra_features_effects: jnp.ndarray
+    extra_features_effects: jnp.ndarray,
+    
 ) -> jnp.ndarray:
   """ Calculate (s, n) target attributed to media.
   
@@ -1247,6 +1253,8 @@ def calculate_media_effects(
 
   n_channels = media_data.shape[1]
   n_geos = media_data.shape[2] if media_data.ndim == 3 else 1
+
+  observations = transform_kwargs.get('observations', None)
 
   carryover_models = [
     transform_carryover,
@@ -1359,8 +1367,8 @@ def calculate_media_effects(
         coef_media = numpyro.sample(
             name="channel_coef_media_models" if media_data.ndim == 3 else "coef_media_models",
             fn= dist.TruncatedNormal(
-              loc=0.0,
-              scale=media_prior,
+              loc=custom_priors['coef_media'].get('loc', 0.0) if 'coef_media' in custom_priors else 0.0,
+              scale=custom_priors['coef_media'].get('scale', media_prior) if 'coef_media' in custom_priors else media_prior,
               low=lower_bounds,
               high=upper_bounds
               #low=lower_bounds * media_prior,
@@ -1381,6 +1389,8 @@ def calculate_media_effects(
                 #fn=dist.HalfNormal(scale=coef_media * normalisation_factor)
             )
 
+    logger.debug(f'Coef Media: {coef_media}')
+
     # For national model's case
     media_einsum = "mtc, mc -> mtc"  # t = time, c = channel
     if media_data.ndim == 3:  # For geo model's case
@@ -1388,10 +1398,41 @@ def calculate_media_effects(
 
     media_contribution = jnp.einsum(media_einsum, media_transformed, coef_media)
 
-    logger.debug(f'Coef Media: {coef_media}')
+    ########################################
+    # Observations, Incrementality Tests
+    ########################################
+    if observations is not None:
+      for i, obs in enumerate(observations):
+        # _ = numpyro.sample(
+        #   name=obs['test_name'],
+        #   fn=dist.Normal(
+        #     loc=media_contribution[
+        #       :,
+        #       obs['time_periods'],
+        #       obs['channel']
+        #     ],
+        #     scale=0.05
+        #   ),
+        #   obs=jnp.repeat(
+        #     jnp.expand_dims(obs['attributed_values'], 0),
+        #     repeats=n_models,
+        #     axis=0
+        #   )
+        # )
+        _ = numpyro.sample(
+          name=f'observation_{i}',
+          fn=dist.Normal(
+            loc=media_contribution[
+              :,
+              obs['time_periods'],
+              obs['channel']
+            ].sum(axis=1),
+            scale=0.2
+          ),
+          obs=jnp.ones((n_models,)) * obs['attributed_values']
+        )
 
-    n_models = len(_ENSEMBLE_ADSTOCK_TRANSFORMS) * len(_ENSEMBLE_SATURATION_TRANSFORMS)
-
+    
     with numpyro.plate(name=F'{_MODEL_WEIGHTS}_plate', size=n_models):
       weights = numpyro.sample(
         _MODEL_WEIGHTS + '_raw',
@@ -1468,6 +1509,7 @@ def media_mix_model(
     doms: Optional[jnp.ndarray] = None,
     weekday_seasonality: bool = False,
     extra_features: Optional[jnp.array] = None,
+    #observations: Dict = None
     #bounds: Optional[Dict[str, Dict[int, Tuple[float]]]] = None
     ) -> None:
   """Media mix model.
@@ -1518,11 +1560,13 @@ def media_mix_model(
     degrees_seasonality,
     frequency,
     weekday_seasonality,
-    custom_priors
+    custom_priors,
+    transform_kwargs=transform_kwargs
   )
   trend_effects = calculate_trend_effects(
     media_data,
-    custom_priors
+    custom_priors,
+    transform_kwargs=transform_kwargs
   )
   if extra_features is None:
     extra_features_effects = 0
@@ -1548,7 +1592,7 @@ def media_mix_model(
     intercept,
     seasonal_effects,
     trend_effects,
-    extra_features_effects,
+    extra_features_effects
   )
 
   logger.debug(f'Seasonal effects: {seasonal_effects.mean()}, {seasonal_effects.max()}')

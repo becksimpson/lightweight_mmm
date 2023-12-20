@@ -197,7 +197,7 @@ class LightweightMMM:
         models.TRANSFORM_PRIORS_NAMES[self.model_name])
     if self.model_name == 'ensemble':
       self._prior_names = self._prior_names.union(
-        [models._MODEL_WEIGHTS]
+        [models._MODEL_WEIGHTS, models._MODEL_SIGMA]
       )
       self.model_names = [
         fn_adstock.__name__ + '_' + fn_sat.__name__
@@ -541,6 +541,10 @@ class LightweightMMM:
     Returns:
       The predictions for the given data.
     """
+    transform_kwargs = {
+      k:v for k, v in transform_kwargs.items()
+      if k != 'observations'
+    }
     return infer.Predictive(
         model=model, posterior_samples=posterior_samples)(
             rng_key=rng_key,
@@ -653,12 +657,14 @@ class LightweightMMM:
         weekday_seasonality=self._weekday_seasonality,
         transform_function=self._model_transform_function,
         transform_hyperprior=self.transform_hyperprior,
-        transform_kwargs=self._transform_kwargs,
+        #transform_kwargs=
         #transform_prior_function=self._transform_prior_function,
         model=self._model_function,
         custom_priors=self.custom_priors,
         #bounds=self.bounds,
-        posterior_samples=self.trace)["mu"][:, previous_media.shape[0]:]
+        posterior_samples=self.trace,
+        **self._transform_kwargs
+      )["mu"][:, previous_media.shape[0]:]
     if target_scaler:
       prediction = target_scaler.inverse_transform(prediction)
 

@@ -31,6 +31,7 @@ def calculate_seasonality(
     degrees: int,
     gamma_seasonality: Union[int, float, jnp.ndarray],
     frequency: int = 52,
+    transform_kwargs=None
 ) -> jnp.ndarray:
   """Calculates cyclic variation seasonality using Fourier terms.
 
@@ -50,7 +51,7 @@ def calculate_seasonality(
     An array with the seasonality values.
   """
 
-  seasonality_range = jnp.expand_dims(a=jnp.arange(number_periods), axis=-1)
+  seasonality_range = jnp.expand_dims(a=(jnp.arange(number_periods) + (transform_kwargs or {}).get('dates_offset', 0)) % number_periods, axis=-1)
   degrees_range = jnp.arange(1, degrees+1)
   inner_value = seasonality_range * 2 * jnp.pi * degrees_range / frequency
   season_matrix_sin = jnp.sin(inner_value)
@@ -275,7 +276,8 @@ def carryover_310(
   ad_effect_retention_rate: jnp.ndarray,
   peak_effect_delay: jnp.ndarray,
   number_lags: int = 100) -> jnp.ndarray:
-
+  number_lags = min(number_lags, int(0.5 * data.shape[0]))
+  
   #ad_effect_retention_rate = jnp.clip(ad_effect_retention_rate, None, RETENTION_LIMIT)
   ad_effect_retention_rate = ad_effect_retention_rate * AD_EFFECT_RETENTION_LIMIT
 

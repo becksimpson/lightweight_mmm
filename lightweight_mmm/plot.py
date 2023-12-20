@@ -1740,9 +1740,11 @@ def plot_prior_and_posterior(
           #prior_distributions = [None for _ in range(len(media_names))]
         for idx, prior in prior_distribution.items():
           prior_distributions[idx] = prior
+
+        prior_distribution = prior_distributions
       elif not isinstance(prior_distribution, numpyro.distributions.Distribution):
         raise ValueError(f"{feature} cannot be plotted.")
-      prior_distribution = prior_distributions
+      
     elif feature in default_priors.keys():
       prior_distribution = default_priors[feature]
     elif feature in media_transform_priors.keys():
@@ -1781,7 +1783,24 @@ def plot_prior_and_posterior(
       print(f'{feature} not found to have fixed prior distribution')
       continue
 
+    if isinstance(prior_distribution, numpyro.distributions.Distribution):
+      if hasattr(prior_distribution, 'base_dist'):
+        prior_distribution = numpyro.distributions.TruncatedNormal(
+          low=getattr(prior_distribution, 'low', None),
+          high=getattr(prior_distribution, 'high', None),
+          **{
+            k: getattr(prior_distribution.base_dist, k)
+            for k in prior_distribution.base_dist.arg_constraints.keys()
+          }
+        )
+      else:
+        prior_distribution = prior_distribution.__class__(**{
+          k: getattr(prior_distribution, k)
+          for k in prior_distribution.arg_constraints.keys()
+        })
+
     kwargs_for_helper_function["prior_distribution"] = prior_distribution
+
 
     if feature in [models._MEDIA_TRANSFORM_WEIGHTS, models._MODEL_WEIGHTS]:
       ensemble_names = [
@@ -1795,6 +1814,27 @@ def plot_prior_and_posterior(
 
       for i_feature in range(media_mix_model.trace[feature].shape[1]):
         for j_geo in range(media_mix_model.n_geos):
+
+          if prior_distribution.batch_shape[0] == media_mix_model.trace[feature].shape[1]:
+            kwargs_for_helper_function["prior_distribution"] = (
+                prior_distribution.__class__(
+                  **{
+                    k : getattr(prior_distribution, k)[i_feature]
+                    for k in prior_distribution.arg_constraints.keys()
+                  }
+                )
+                # Prior distribution specified from custom prior
+                if not hasattr(prior_distribution, 'base_dist')
+                else numpyro.distributions.TruncatedNormal(
+                  low=(getattr(prior_distribution, 'low')[i_feature]) if hasattr(prior_distribution, 'low') else None,
+                  high=(getattr(prior_distribution, 'high')[i_feature]) if hasattr(prior_distribution, 'high') else None,
+                  **{
+                    k: getattr(prior_distribution.base_dist, k)[i_feature]
+                    for k in prior_distribution.base_dist.arg_constraints.keys()
+                  }
+                )
+              )
+
           subplot_title = f"{feature} feature {ensemble_names[i_feature]}"
           if media_mix_model.n_geos == 1:
             posterior_samples = np.array(
@@ -1871,13 +1911,41 @@ def plot_prior_and_posterior(
           #     scale=0.05,
           #     low=1e-6
           # )
-          prior_distribution = models._generate_media_prior_distribution(
-            jnp.squeeze(media_mix_model._media_prior[i_channel])
-          )
+          if 'coef_media' not in media_mix_model.custom_priors:
+            prior_distribution = models._generate_media_prior_distribution(
+              jnp.squeeze(media_mix_model._media_prior[i_channel])
+            )
+          else:
+            prior_distribution = numpyro.distributions.TruncatedNormal(
+              **{
+                k: v[i_channel]
+                for k, v in media_mix_model.custom_priors['coef_media'].items()
+              }
+            )
           # prior_distribution = numpyro.distributions.continuous.HalfNormal(
           #     scale=jnp.squeeze(media_mix_model._media_prior[i_channel]))
         if isinstance(prior_distribution, numpyro.distributions.Distribution):
-          kwargs_for_helper_function["prior_distribution"] = prior_distribution
+          if len(prior_distribution.batch_shape) == 1 and prior_distribution.batch_shape[0] == media_mix_model.n_media_channels:
+            kwargs_for_helper_function["prior_distribution"] = (
+              prior_distribution.__class__(
+                **{
+                  k : getattr(prior_distribution, k)[i_channel]
+                  for k in prior_distribution.arg_constraints.keys()
+                }
+              )
+              # Prior distribution specified from custom prior
+              if not hasattr(prior_distribution, 'base_dist')
+              else numpyro.distributions.TruncatedNormal(
+                low=(getattr(prior_distribution, 'low')[i_channel]) if hasattr(prior_distribution, 'low') else None,
+                high=getattr(prior_distribution, 'high')[i_channel] if hasattr(prior_distribution, 'high') else None,
+                **{
+                  k: getattr(prior_distribution.base_dist, k)[i_channel]
+                  for k in prior_distribution.base_dist.arg_constraints.keys()
+                }
+              )
+            )
+          else:
+            kwargs_for_helper_function["prior_distribution"] = prior_distribution
         elif isinstance(prior_distribution, list):
           kwargs_for_helper_function["prior_distribution"] = prior_distribution[i_channel]
         else:
@@ -1913,12 +1981,26 @@ def plot_prior_and_posterior(
       for i_day in range(6):
         subplot_title = f"{feature}, day {i_day}"
         posterior_samples = np.array(media_mix_model.trace[feature][:, i_day])
+        w_prior = (
+          prior_distribution.__class__(
+            **{
+              k : getattr(prior_distribution, k)[i_day]
+              for k in prior_distribution.arg_constraints.keys()
+            }
+          )
+          if prior_distribution.batch_shape[0] == 6
+          else prior_distribution
+        )
         (fig, gridspec_fig,
           i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
               posterior_samples=posterior_samples,
               subplot_title=subplot_title,
               i_ax=i_ax,
-              **kwargs_for_helper_function)
+              **{
+                  **kwargs_for_helper_function,
+                  'prior_distribution': w_prior
+                },
+              )
 
     if feature == models._GAMMA_SEASONALITY:
       for i_season in range(media_mix_model._degrees_seasonality):
@@ -1928,25 +2010,65 @@ def plot_prior_and_posterior(
           posterior_samples = np.array(media_mix_model.trace[feature][:,
                                                                       i_season,
                                                                       j_season])
+          ij_prior = (
+            prior_distribution.__class__(
+              **{
+                k : getattr(prior_distribution, k)[i_season, j_season]
+                for k in prior_distribution.arg_constraints.keys()
+              }
+            )
+            # Prior distribution specified from custom prior
+            if len(prior_distribution.batch_shape) == 2
+            else prior_distribution
+          )
           (fig, gridspec_fig,
             i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
                 posterior_samples=posterior_samples,
                 subplot_title=subplot_title,
                 i_ax=i_ax,
-                **kwargs_for_helper_function)
+                **{
+                  **kwargs_for_helper_function,
+                  'prior_distribution': ij_prior
+                },
+            )
           
     if feature == models._PARAM_DAY_OF_MONTH:
       for i_param in range(2):
         alpha_or_beta = "alpha" if i_param == 0 else "beta"
         subplot_title = f"{feature}, param:{alpha_or_beta}"
-        posterior_samples = np.array(media_mix_model.trace[feature][:,
-                                                                    i_param])
+        posterior_samples = np.array(media_mix_model.trace[feature][:,i_param])
+
+        i_prior = (
+          (
+            prior_distribution.__class__(
+              **{
+                k : getattr(prior_distribution, k)[i_param]
+                for k in prior_distribution.arg_constraints.keys()
+              }
+            )
+            if not hasattr(prior_distribution, 'base_dist')
+            else numpyro.distributions.TruncatedNormal(
+              low=getattr(prior_distribution, 'low', None),
+              high=getattr(prior_distribution, 'high', None),
+              **{
+                k: getattr(prior_distribution.base_dist, k)[i_param]
+                for k in prior_distribution.base_dist.arg_constraints.keys()
+              }
+            )
+          )
+          # Prior distribution specified from custom prior
+          if prior_distribution.batch_shape[0] == 2
+          else prior_distribution
+        )
         (fig, gridspec_fig,
           i_ax) = _make_prior_and_posterior_subplot_for_one_feature(
               posterior_samples=posterior_samples,
               subplot_title=subplot_title,
               i_ax=i_ax,
-              **kwargs_for_helper_function)
+              **{
+                  **kwargs_for_helper_function,
+                  'prior_distribution': i_prior
+                })
     
 
     if feature in [*other_features, models._MULTIPLIER_DAY_OF_MONTH] and feature != models._COEF_EXTRA_FEATURES:
