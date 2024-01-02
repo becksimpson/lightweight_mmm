@@ -64,6 +64,74 @@ def calculate_seasonality(
   return (season_matrix * gamma_seasonality).sum(axis=2).sum(axis=1)
 
 
+@functools.partial(jax.jit, static_argnames=('number_lags', ))
+def weibull(
+    data: jnp.ndarray,
+    weibull_scale: jnp.ndarray, # lambda
+    weibull_shape: jnp.ndarray, # k
+    number_lags: int = 30,
+  ) -> jnp.ndarray:
+  """Calculates the weibull PDF function for a given array of values.
+
+  Refer to the following link for detailed information on this equation:
+    https://en.wikipedia.org/wiki/Weibull_distribution
+
+  Args:
+    data: Input data.
+    shape: Shape for the weibull function.
+    slope: Slope of the weibull function.
+
+  Returns:
+    The weibull values for the respective input data.
+  """
+  number_lags = min(number_lags, int(0.5 * data.shape[0]))
+  # Min is 1, or infinite at 
+  # Larger shape, more delayed impact
+  shape = 1 + 1e-6 + weibull_shape * 3
+  scale = (0.01 + 0.29 * weibull_scale) * number_lags
+  #print(shape, scale)
+
+  lags_arange = jnp.expand_dims(
+    jnp.arange(number_lags, dtype=jnp.float32),
+    axis=-1
+  ) + 1
+  multiplier_safe = (shape / scale) * (lags_arange / scale) ** (shape - 1)
+  exponent_safe = jnp.exp(- (lags_arange / scale) ** shape)
+  weights = multiplier_safe * exponent_safe
+
+  zeros = jnp.zeros((number_lags - 1, data.shape[1]))
+  window = jnp.concatenate([zeros, weights])
+
+  # return jnp.concatenate([
+  #     jax.numpy.convolve(
+  #       data[:, i],
+  #       window[:, i],
+  #       mode='same',
+  #     ).reshape(-1, 1)
+  #   for i in range(data.shape[1])
+  # ], axis=1) / weights.sum(axis=0).reshape(1, -1)
+
+  # Remove mask window effect
+  mask = jnp.ones((len(weights) + 1, len(weights) + 1))
+  mask = mask.at[jnp.tril_indices_from(mask)].set(0)
+  mask = mask[:-1, 1:]
+
+  weight_norm = jnp.ones(data.shape) * weights.sum(axis=0).reshape(1, -1)
+  for i in range(data.shape[1]):
+    weight_norm = weight_norm.at[:number_lags, i].set((weights[:, i].reshape(-1, 1) * mask).sum(axis=0))
+
+  arr = jnp.concatenate([
+      jax.numpy.convolve(
+        data[:, i],
+        window[:, i],
+        mode='same',
+      ).reshape(-1, 1)
+    for i in range(data.shape[1])
+  ], axis=1) /  (jnp.clip(weight_norm, a_min=1e-6))
+
+  return arr / (arr.sum(axis=0) / data.sum(axis=0)).reshape(1, -1)
+
+
 @jax.jit
 def adstock(data: jnp.ndarray,
             lag_weight: float,

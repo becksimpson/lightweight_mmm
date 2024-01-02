@@ -114,6 +114,8 @@ _PEAK_EFFECT_DELAY = "peak_effect_delay"
 _SATURATION = 'saturation'
 _HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED = 'half_max_effective_concentraton_constrained'
 _SLOPE_CONSTRAINED = "slope_constrained"
+_WEIBULL_SHAPE = "weibull_shape"
+_WEIBULL_SCALE = "weibull_scale"
 
 GEO_ONLY_PRIORS = frozenset((_COEF_SEASONALITY,))
 
@@ -241,6 +243,18 @@ def _get_transform_hyperprior_distributions() -> Mapping[str, Mapping[str, Union
         'concentration1': dist.Uniform(1.0, 5.0),
         'concentration0': 5.0,
     }),
+    # Fixed as all set with prior beliefs anyways
+    # Higher more delay
+    _WEIBULL_SHAPE: immutabledict.immutabledict({
+      'concentration1': 2.0,
+      'concentration0': 5.0
+    }),
+    # Larger, more carryover effects
+    # Low carryover (0 -> 0.6)
+    _WEIBULL_SCALE: immutabledict.immutabledict({
+      'concentration1': 1.0,
+      'concentration0': 5.0
+    }),
   })
 
 def _generate_media_prior_distribution(
@@ -303,6 +317,8 @@ def _get_transform_prior_distributions() -> Mapping[str, Prior]:
     _SLOPE: dist.Gamma(concentration=1.5, rate=2.),
     _HALF_MAX_EFFECTIVE_CONCENTRATION_CONSTRAINED: dist.Beta(concentration1=1., concentration0=1.),
     _SLOPE_CONSTRAINED: dist.Beta(concentration1=3., concentration0=5.),
+    _WEIBULL_SCALE: dist.Beta(concentration1=1.0, concentration0=5.),
+    _WEIBULL_SHAPE: dist.Beta(concentration1=2.0, concentration0=5.)
   })
 
 
@@ -363,7 +379,8 @@ def _get_transform_prior_hyperprior_distribution(
 # Ensemble MMM - Adstock / Saturation Functions + Parameters used.
 _ENSEMBLE_ADSTOCK_TRANSFORMS = immutabledict.immutabledict({
   (_LAG_WEIGHT,): media_transforms.adstock,
-  (_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY): media_transforms.carryover
+  #(_AD_EFFECT_RETENTION_RATE, _PEAK_EFFECT_DELAY): media_transforms.carryover,
+  (_WEIBULL_SCALE, _WEIBULL_SHAPE): media_transforms.weibull
 })
 _ENSEMBLE_SATURATION_TRANSFORMS = immutabledict.immutabledict({
   #(_EXPONENT,): media_transforms.apply_exponent_safe,
