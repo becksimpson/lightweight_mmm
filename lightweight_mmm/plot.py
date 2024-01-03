@@ -1815,7 +1815,7 @@ def plot_prior_and_posterior(
       for i_feature in range(media_mix_model.trace[feature].shape[1]):
         for j_geo in range(media_mix_model.n_geos):
 
-          if prior_distribution.batch_shape[0] == media_mix_model.trace[feature].shape[1]:
+          if prior_distribution.batch_shape.__len__() != 0 and prior_distribution.batch_shape[0] == media_mix_model.trace[feature].shape[1]:
             kwargs_for_helper_function["prior_distribution"] = (
                 prior_distribution.__class__(
                   **{
