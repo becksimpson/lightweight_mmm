@@ -15,7 +15,9 @@ on:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on:
+      - self-hosted
+      - production
     container: docker.tw.ee/actions_python3_9
 
     steps:
