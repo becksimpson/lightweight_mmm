@@ -1,0 +1,46 @@
+name: Upload to internal PyPi (Arti)
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      branch:
+        default: 'main'
+        type: string
+
+jobs:
+  publish:
+    runs-on:
+      - self-hosted
+      - production
+    container: docker.tw.ee/actions_python3_9
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2.3.4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip twine build setuptools wheel
+
+      # - name: Setup virtual environment
+      #   run: python -m pip install -r requirements/requirements_prod.txt  # poetry install
+
+      - name: Build distributable package
+        run: python -m build # poetry build
+
+      - name: Check distributable
+        run: twine check --strict dist/*.whl
+
+      - name: Publish to internal Pypi in Arti
+        env:
+          ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_PASSWORD }}
+        run: |
+          twine upload --repository-url https://arti.tw.ee/artifactory/api/pypi/pypi-internal -u $ARTIFACTORY_USER -p $ARTIFACTORY_PASSWORD --skip-existing dist/*.whl
