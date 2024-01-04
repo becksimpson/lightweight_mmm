@@ -54,23 +54,20 @@ def _parse_requirements(path):
 _VERSION = _get_version()
 _README = _get_readme()
 _INSTALL_REQUIREMENTS = _parse_requirements(os.path.join(
-    _CURRENT_DIR, "requirements", "requirements.txt"))
-_TEST_REQUIREMENTS = _parse_requirements(os.path.join(
-    _CURRENT_DIR, "requirements", "requirements_tests.txt"))
+    _CURRENT_DIR, "requirements", "requirements_prod.txt"))
 
 setup(
-    name="lightweight_mmm",
+    name="wise_lightweight_mmm",
     version=_VERSION,
-    description="Package for Media-Mix-Modelling",
+    description="Package for Media-Mix-Modelling adapted from Google",
     long_description="\n".join([_README]),
     long_description_content_type="text/markdown",
     author="Google LLC",
     author_email="no-reply@google.com",
     license="Apache 2.0",
-    packages=find_packages(),
+    packages="lightweight_mmm",
     install_requires=_INSTALL_REQUIREMENTS,
-    tests_require=_TEST_REQUIREMENTS,
-    url="https://github.com/google/lightweight_mmm",
+    url="https://github.com/transferwise/lightweight_mmm",
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
@@ -80,6 +77,5 @@ setup(
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
-
     ],
 )
